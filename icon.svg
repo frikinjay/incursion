@@ -1,0 +1,11 @@
+<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080">
+	<style>
+		.s0 { fill: #303947;stroke: #000000;stroke-miterlimit:10 } 
+		.s1 { fill: #ffffff } 
+	</style>
+	<g id="Folder 1">
+		<path id="Shape 1" fill-rule="evenodd" class="s0" d="m1046 34v1012h-1012v-1012z"/>
+		<path id="I" class="s1" aria-label="I"  d="m669.4 116.6v836.4h-257.4v-579h-90.1v-257.4z"/>
+		<path id="I" class="s1" aria-label="I"  d="m411.6 953.4v-836.4h257.4v579h90.1v257.4z"/>
+	</g>
+</svg>

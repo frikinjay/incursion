@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Environment variables (CRITICAL SECURITY)
+.env
+
+# OS generated files
+.DS_Store
+Thumbs.db

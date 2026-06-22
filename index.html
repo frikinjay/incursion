@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Incursion Mod Manager</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="titlebar">
+        <div class="titlebar-left">
+            <img src="icon.svg" alt="" class="app-icon" onerror="this.style.display='none'">
+            <span class="app-title">Incursion</span>
+        </div>
+        <div class="titlebar-right">
+            <button id="minBtn" class="win-btn" title="Minimize">
+                <svg width="12" height="12" viewBox="0 0 12 12"><rect fill="currentColor" width="10" height="1" x="1" y="6"></rect></svg>
+            </button>
+            <button id="maxBtn" class="win-btn" title="Maximize">
+                <svg width="12" height="12" viewBox="0 0 12 12"><rect width="9" height="9" x="1.5" y="1.5" fill="none" stroke="currentColor"></rect></svg>
+            </button>
+            <button id="closeBtn" class="win-btn close-btn" title="Close">
+                <svg width="12" height="12" viewBox="0 0 12 12"><polygon fill="currentColor" fill-rule="evenodd" points="11 1.576 6.583 6 11 10.424 10.424 11 6 6.583 1.576 11 1 10.424 5.417 6 1 1.576 1.576 1 6 5.417 10.424 1"></polygon></svg>
+            </button>
+        </div>
+    </header>
+
+    <div id="mainContainer">
+        
+        <div id="homeView" class="view-panel active">
+            <div class="packs-header">
+                <h2>Incursion Modpacks</h2>
+                <div class="header-buttons">
+                    <button id="showCreatePackBtn" class="success-btn">Create Modpack</button>
+                    <button id="addModpackBtn" class="primary-btn">Add Modpack</button>
+                    <button id="showApiKeysBtn" class="secondary-btn">API Keys</button>
+                </div>
+            </div>
+            
+            <div id="packsList" class="packs-grid"></div>
+        </div>
+
+        <div id="packDetailsScreen" class="view-panel hidden">
+            <div class="view-header">
+                <button class="back-btn" id="backToHomeBtn">← Back</button>
+                <h2 id="detailPackName">Pack Name</h2>
+            </div>
+            <div class="details-sub">
+                <p id="detailPackPath"></p>
+                <button id="addModsToPackBtn" class="primary-btn">+ Add Mods</button>
+            </div>
+            <div class="divider"></div>
+            
+            <div class="pack-controls-bar">
+                <div class="sort-group">
+                    <label>Sort:</label>
+                    <select id="packSortSelect">
+                        <option value="name-asc">Alphabetical (A-Z)</option>
+                        <option value="name-desc">Alphabetical (Z-A)</option>
+                        <option value="date-desc">Date Added (Newest)</option>
+                        <option value="date-asc">Date Added (Oldest)</option>
+                    </select>
+                </div>
+                <div class="action-group">
+                    <button id="checkUpdatesBtn" class="secondary-btn">Check Updates</button>
+                    <button id="updateAllBtn" class="success-btn" disabled>Update All</button>
+                </div>
+            </div>
+            
+            <div id="packModsList" class="installed-mods-list"></div>
+            <div id="packModsList" class="installed-mods-list"></div>
+        </div>
+
+        <div id="searchView" class="view-panel hidden">
+            <div class="view-header">
+                <button class="back-btn" id="backFromSearchBtn">← Back</button>
+                <h2>Search Mods</h2>
+            </div>
+            
+            <div class="controls">
+                <input type="text" id="searchInput" placeholder="Search for a mod...">
+                <select id="versionSelect" disabled>
+                    <option value="">Loading...</option>
+                </select>
+                <select id="loaderSelect">
+                    <option value="fabric">Fabric</option>
+                    <option value="neoforge">NeoForge</option>
+                </select>
+                <button id="searchBtn">Search</button>
+            </div>
+            
+            <div id="resultsDiv"></div>
+            
+            <div class="pagination hidden" id="paginationControls">
+                <button id="prevBtn" disabled>Previous</button>
+                <span id="pageInfo">Page 1</span>
+                <button id="nextBtn" disabled>Next</button>
+            </div>
+        </div>
+
+        <div id="apiKeysView" class="view-panel hidden">
+            <div class="view-header">
+                <button class="back-btn" id="backFromApiKeysBtn">← Back</button>
+                <h2>API Settings</h2>
+            </div>
+            
+            <div style="background: var(--bg-surface); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); max-width: 600px;">
+                <p style="color: var(--text-muted); margin-top: 0; margin-bottom: 20px;">
+                    Enter your API keys below. These will override any keys found in your local .env file.
+                </p>
+                
+                <div style="display: flex; flex-direction: column; gap: 15px;">
+                    <div>
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">CurseForge Core API Key</label>
+                        <input type="password" id="cfKeyInput" style="width: 100%; box-sizing: border-box;" placeholder="$2a$10$...">
+                    </div>
+                    <div>
+                        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Modrinth API Key</label>
+                        <input type="password" id="mrKeyInput" style="width: 100%; box-sizing: border-box;" placeholder="mpo_...">
+                    </div>
+                    
+                    <button id="saveApiKeysBtn" class="success-btn" style="margin-top: 10px; width: fit-content;">Save API Keys</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div id="createPackForm" class="modal-panel hidden">
+        <div class="modal-content">
+            <h3>Create New Modpack</h3>
+            <input type="text" id="packNameInput" placeholder="Pack Name">
+            
+            <div class="dir-picker-row">
+                <select id="createPackVersionSelect" disabled style="flex: 1;">
+                    <option value="">Loading versions...</option>
+                </select>
+                <select id="createPackLoaderSelect" style="flex: 1;">
+                    <option value="fabric">Fabric</option>
+                    <option value="neoforge">NeoForge</option>
+                </select>
+            </div>
+
+            <div class="dir-picker-row">
+                <input type="text" id="packDirInput" placeholder="Select Directory..." readonly>
+                <button id="browseDirBtn">Browse</button>
+            </div>
+            <div class="form-actions">
+                <button id="cancelCreateBtn">Cancel</button>
+                <button id="confirmCreateBtn" class="success-btn">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toastContainer"></div>
+    <script src="renderer.js"></script>
+</body>
+</html>
