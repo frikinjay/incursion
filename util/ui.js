@@ -1,5 +1,4 @@
 const UI = {
-    // Toggles the visibility of your main app views
     switchView: (viewName, viewsObject) => {
         Object.values(viewsObject).forEach(v => {
             v.classList.remove('active');
@@ -9,7 +8,6 @@ const UI = {
         viewsObject[viewName].classList.remove('hidden');
     },
 
-    // Displays sliding toast notifications
     showError: (message) => {
         const container = document.getElementById('toastContainer');
         const toast = document.createElement('div');

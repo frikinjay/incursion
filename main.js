@@ -45,6 +45,8 @@ ipcMain.handle('save-global-packs', async (event, packs) => await storage.saveGl
 ipcMain.handle('save-pack-metadata', async (event, { packPath, metadata }) => await storage.savePackMetadata(packPath, metadata));
 ipcMain.handle('load-pack-metadata', async (event, packPath) => await storage.loadPackMetadata(packPath));
 ipcMain.handle('remove-mod-files', async (event, { packPath, files }) => await storage.removeModFiles(packPath, files));
+ipcMain.handle('clear-api-cache', async () => await storage.clearApiCache());
+ipcMain.handle('download-mod', async (event, { mod, packPath }) => await storage.downloadModFiles(mod, packPath));
 
 // --- API ROUTES ---
 ipcMain.handle('get-api-keys', async () => await apiUtils.updateApiHeaders());
@@ -57,4 +59,4 @@ ipcMain.handle('save-api-keys', async (event, keys) => {
 ipcMain.handle('get-versions', async () => await apiUtils.getVersions());
 ipcMain.handle('search-mods', async (event, params) => await apiUtils.searchMods(params));
 ipcMain.handle('check-mod-updates', async (event, params) => await apiUtils.checkModUpdates(params));
-ipcMain.handle('download-mod', async (event, { mod, packPath }) => await storage.downloadModFiles(mod, packPath));
+ipcMain.handle('sync-metadata', async (event, params) => await apiUtils.syncMetadata(params));

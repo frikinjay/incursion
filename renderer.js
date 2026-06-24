@@ -24,13 +24,11 @@ document.getElementById('backFromApiKeysBtn').addEventListener('click', () => {
 
 // --- APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Initialize Sub-Managers
     HomeManager.init();
     DetailsManager.init();
     SearchManager.init();
     SettingsManager.init();
 
-    // 2. Fetch Supported Versions from APIs
     const verRes = await window.api.getVersions();
     if (verRes.success && verRes.versions.length > 0) {
         const versionSelect = document.getElementById('versionSelect');
@@ -48,7 +46,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         createVersionSelect.disabled = false;
     }
 
-    // 3. Load Saved Packs
     AppState.globalPacks = await window.api.getGlobalPacks();
     HomeManager.renderPacksList();
 });

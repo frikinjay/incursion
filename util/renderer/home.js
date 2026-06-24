@@ -14,7 +14,6 @@ window.HomeManager = {
             if (dir) document.getElementById('packDirInput').value = dir;
         });
 
-        // Pack Creation
         document.getElementById('confirmCreateBtn').addEventListener('click', async () => {
             const name = document.getElementById('packNameInput').value.trim();
             const dir = document.getElementById('packDirInput').value;

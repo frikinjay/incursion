@@ -5,8 +5,21 @@ const { app } = require('electron');
 
 const globalCachePath = path.join(app.getPath('userData'), 'global-packs.json');
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+const versionsCachePath = path.join(app.getPath('userData'), 'versions-cache.json'); // <-- NEW
+const apiCachePath = path.join(app.getPath('userData'), 'api-cache.json');
 
 module.exports = {
+    // --- CACHING ---
+    getVersionsCache: async () => {
+        if (await fs.pathExists(versionsCachePath)) return await fs.readJson(versionsCachePath);
+        return null;
+    },
+
+    saveVersionsCache: async (versions) => {
+        await fs.outputJson(versionsCachePath, { timestamp: Date.now(), versions }, { spaces: 4 });
+    },
+
+    // --- PACK MANAGEMENT ---
     getGlobalPacks: async () => {
         if (await fs.pathExists(globalCachePath)) return await fs.readJson(globalCachePath);
         return [];
@@ -54,6 +67,7 @@ module.exports = {
         }
     },
 
+    // --- DOWNLOADING ---
     downloadModFiles: async (mod, packPath) => {
         const cfTargetDir = packPath 
             ? path.join(packPath, 'curseforge', 'mods') 
@@ -85,6 +99,7 @@ module.exports = {
         }
     },
 
+    // --- SETTINGS ---
     getSettings: async () => {
         if (await fs.pathExists(settingsPath)) return await fs.readJson(settingsPath);
         return {};
@@ -92,6 +107,21 @@ module.exports = {
 
     saveSettings: async (keys) => {
         await fs.outputJson(settingsPath, keys, { spaces: 4 });
+        return { success: true };
+    },
+
+    // --- API CACHING ---
+    getApiCache: async () => {
+        if (await fs.pathExists(apiCachePath)) return await fs.readJson(apiCachePath);
+        return {};
+    },
+
+    saveApiCache: async (cacheData) => {
+        await fs.outputJson(apiCachePath, cacheData, { spaces: 4 });
+    },
+
+    clearApiCache: async () => {
+        if (await fs.pathExists(apiCachePath)) await fs.remove(apiCachePath);
         return { success: true };
     }
 };

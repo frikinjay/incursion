@@ -61,12 +61,17 @@
                     </select>
                 </div>
                 <div class="action-group">
+                    <button id="redownloadAllBtn" class="secondary-btn">Redownload All</button> 
+                    <button id="refreshInstalledCacheBtn" class="secondary-btn">Refresh Cache</button>
                     <button id="checkUpdatesBtn" class="secondary-btn">Check Updates</button>
                     <button id="updateAllBtn" class="success-btn" disabled>Update All</button>
                 </div>
             </div>
             
-            <div id="packModsList" class="installed-mods-list"></div>
+            <div id="redownloadProgressContainer">
+                <div id="redownloadProgressBar"></div>
+            </div>
+            
             <div id="packModsList" class="installed-mods-list"></div>
         </div>
 
@@ -78,14 +83,10 @@
             
             <div class="controls">
                 <input type="text" id="searchInput" placeholder="Search for a mod...">
-                <select id="versionSelect" disabled>
-                    <option value="">Loading...</option>
-                </select>
-                <select id="loaderSelect">
-                    <option value="fabric">Fabric</option>
-                    <option value="neoforge">NeoForge</option>
-                </select>
-                <button id="searchBtn">Search</button>
+                <select id="versionSelect" disabled><option value="">Loading...</option></select>
+                <select id="loaderSelect"><option value="fabric">Fabric</option><option value="neoforge">NeoForge</option></select>
+                <button id="searchBtn" class="primary-btn">Search</button>
+                <button id="refreshSearchCacheBtn" class="secondary-btn">Refresh Cache</button> 
             </div>
             
             <div id="resultsDiv"></div>

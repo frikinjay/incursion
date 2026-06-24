@@ -17,5 +17,7 @@ contextBridge.exposeInMainWorld('api', {
     closeWindow: () => ipcRenderer.send('window-close'),
     checkModUpdates: (params) => ipcRenderer.invoke('check-mod-updates', params),
     getApiKeys: () => ipcRenderer.invoke('get-api-keys'),
-    saveApiKeys: (keys) => ipcRenderer.invoke('save-api-keys', keys)
+    saveApiKeys: (keys) => ipcRenderer.invoke('save-api-keys', keys),
+    clearApiCache: () => ipcRenderer.invoke('clear-api-cache'),
+    syncMetadata: (params) => ipcRenderer.invoke('sync-metadata', params)
 });

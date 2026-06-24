@@ -49,6 +49,80 @@ window.DetailsManager = {
             btn.innerText = 'Update All';
             btn.disabled = true; 
         });
+
+        document.getElementById('redownloadAllBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('redownloadAllBtn');
+            const modsToRedownload = AppState.currentActivePack.mods;
+
+            if (!modsToRedownload || modsToRedownload.length === 0) {
+                UI.showError("No mods to redownload.");
+                return;
+            }
+
+            btn.innerText = 'Redownloading...';
+            btn.disabled = true;
+            
+            const progressContainer = document.getElementById('redownloadProgressContainer');
+            const progressBar = document.getElementById('redownloadProgressBar');
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '0%';
+
+            const allIndividualBtns = document.querySelectorAll('.mod-item-actions button');
+            allIndividualBtns.forEach(b => b.disabled = true);
+
+            UI.showError("Syncing metadata...");
+            const syncRes = await window.api.syncMetadata({ mods: modsToRedownload });
+            if (syncRes.success) {
+                AppState.currentActivePack.mods = syncRes.mods;
+                await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+            }
+
+            let successCount = 0;
+            let failCount = 0;
+            const total = modsToRedownload.length;
+
+            for (let i = 0; i < total; i++) {
+                const mod = modsToRedownload[i];
+                try {
+                    await window.api.removeModFiles({ packPath: AppState.currentActivePack.path, files: mod.installedFiles });
+                    const res = await window.api.downloadMod({ mod: mod, packPath: AppState.currentActivePack.path });
+                    
+                    if (res.success) {
+                        successCount++;
+                    } else {
+                        failCount++;
+                        console.error(`Failed to redownload ${mod.names.curseforge}:`, res.error);
+                    }
+                } catch (err) {
+                    failCount++;
+                    console.error(`Error redownloading ${mod.names.curseforge}:`, err);
+                }
+
+                const percent = Math.round(((i + 1) / total) * 100);
+                progressBar.style.width = `${percent}%`;
+            }
+
+            setTimeout(() => { progressContainer.style.display = 'none'; }, 1500);
+            DetailsManager.renderInstalledMods(); 
+            btn.innerText = 'Redownload All';
+            btn.disabled = false;
+
+            if (failCount > 0) {
+                UI.showError(`Redownloaded ${successCount} mods. ${failCount} failed.`);
+            } else {
+                UI.showError(`Successfully redownloaded all ${successCount} mods!`);
+            }
+        });
+
+        document.getElementById('refreshInstalledCacheBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('refreshInstalledCacheBtn');
+            btn.innerText = 'Clearing...';
+            btn.disabled = true;
+            await window.api.clearApiCache();
+            UI.showError("Cache Cleared! Ready for fresh updates.");
+            btn.innerText = 'Refresh Cache';
+            btn.disabled = false;
+        });
     },
 
     openPackDetails: async (packPath) => {
@@ -116,10 +190,24 @@ window.DetailsManager = {
                     <div class="mod-info">
                         <strong style="font-size: 1.1em; color: ${updateAvailable ? 'var(--accent-success)' : 'inherit'};">${mod.names.curseforge}</strong>
                         ${updateAvailable ? `<span style="background: var(--accent-success); color: black; font-size: 0.7em; padding: 2px 6px; border-radius: 4px; margin-left: 8px;">Update Available</span>` : ''}
+                        
+                        ${mod.authors ? `<p style="margin: 5px 0 0 0; font-size: 0.8em; color: var(--accent-primary);">By: ${mod.authors.curseforge} (CF) | ${mod.authors.modrinth} (MR)</p>` : ''}
+                        
                         <p style="margin: 5px 0 10px 0; font-size: 0.9em; color: #ccc; line-height: 1.4;">${mod.summary || 'No description available.'}</p>
-                        <small>
-                            <a href="${mod.links.curseforge}" target="_blank" style="color: var(--accent-primary); text-decoration: none;">CF Project</a> | 
-                            <a href="${mod.links.modrinth}" target="_blank" style="color: var(--accent-primary); text-decoration: none;">MR Project</a>
+                        <small style="display: flex; gap: 8px; margin-top: 10px; align-items: center;">
+                            <span class="project-link-group">
+                                <a href="${mod.links.curseforge}" target="_blank" class="project-link">CF Project</a>
+                                <button class="copy-link-btn" data-url="${mod.links.curseforge}" title="Copy CF Link">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                            </span> 
+                            <span style="color: var(--border-light);">|</span> 
+                            <span class="project-link-group">
+                                <a href="${mod.links.modrinth}" target="_blank" class="project-link">MR Project</a>
+                                <button class="copy-link-btn" data-url="${mod.links.modrinth}" title="Copy MR Link">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                            </span>
                         </small>
                     </div>
                 </div>
@@ -169,6 +257,14 @@ window.DetailsManager = {
                 if (AppState.pendingUpdates[mod.ids.curseforge]) delete AppState.pendingUpdates[mod.ids.curseforge];
                 await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
                 DetailsManager.renderInstalledMods();
+            });
+
+            item.querySelectorAll('.copy-link-btn').forEach(copyBtn => {
+                copyBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(copyBtn.dataset.url);
+                    UI.showError("Link copied to clipboard!");
+                });
             });
 
             list.appendChild(item);

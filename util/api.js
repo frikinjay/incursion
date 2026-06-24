@@ -7,8 +7,34 @@ const MR_API = 'https://api.modrinth.com/v2';
 
 let CF_HEADERS = {};
 let MR_HEADERS = {};
+let searchSessionCache = { query: null, version: null, loader: null, results: [] };
+
+let apiMemoryCache = null;
+let saveCacheTimeout = null;
 
 const normalizeName = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+async function fetchWithCache(cacheKey, requestFn) {
+    if (!apiMemoryCache) {
+        apiMemoryCache = await storage.getApiCache();
+    }
+
+    const oneDayInMs = 24 * 60 * 60 * 1000;
+
+    if (apiMemoryCache[cacheKey] && (Date.now() - apiMemoryCache[cacheKey].timestamp < oneDayInMs)) {
+        return apiMemoryCache[cacheKey].data;
+    }
+
+    const data = await requestFn();
+    apiMemoryCache[cacheKey] = { timestamp: Date.now(), data: data };
+    
+    if (saveCacheTimeout) clearTimeout(saveCacheTimeout);
+    saveCacheTimeout = setTimeout(async () => {
+        await storage.saveApiCache(apiMemoryCache);
+    }, 1500); 
+    
+    return data;
+}
 
 const apiUtils = {
     updateApiHeaders: async () => {
@@ -16,33 +42,35 @@ const apiUtils = {
         const saved = await storage.getSettings();
         settings = { ...settings, ...saved };
         
-        CF_HEADERS = { 'x-api-key': settings.curseforge };
+        CF_HEADERS = { 'x-api-key': settings.curseforge, 'Content-Type': 'application/json', 'Accept': 'application/json' };
         MR_HEADERS = { 'Authorization': settings.modrinth };
         return settings;
     },
 
     getVersions: async () => {
         try {
-            const mrRes = await axios.get(`${MR_API}/tag/game_version`);
-            const mrVersions = mrRes.data.filter(v => v.version_type === 'release').map(v => v.version);
+            return await fetchWithCache('minecraft_versions', async () => {
+                const mrRes = await axios.get(`${MR_API}/tag/game_version`);
+                const mrVersions = mrRes.data.filter(v => v.version_type === 'release').map(v => v.version);
 
-            const cfRes = await axios.get(`${CF_API}/minecraft/version`, { headers: CF_HEADERS });
-            const cfVersions = cfRes.data.data.map(v => v.versionString);
+                const cfRes = await axios.get(`${CF_API}/minecraft/version`, { headers: CF_HEADERS });
+                const cfVersions = cfRes.data.data.map(v => v.versionString);
 
-            let finalVersions = mrVersions.filter(v => cfVersions.includes(v));
-            if (finalVersions.length === 0) finalVersions = mrVersions;
+                let finalVersions = mrVersions.filter(v => cfVersions.includes(v));
+                if (finalVersions.length === 0) finalVersions = mrVersions;
 
-            finalVersions.sort((a, b) => {
-                const partsA = a.split('.').map(Number);
-                const partsB = b.split('.').map(Number);
-                for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-                    const numA = partsA[i] || 0;
-                    const numB = partsB[i] || 0;
-                    if (numA !== numB) return numB - numA;
-                }
-                return 0;
+                finalVersions.sort((a, b) => {
+                    const partsA = a.split('.').map(Number);
+                    const partsB = b.split('.').map(Number);
+                    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+                        const numA = partsA[i] || 0;
+                        const numB = partsB[i] || 0;
+                        if (numA !== numB) return numB - numA;
+                    }
+                    return 0;
+                });
+                return { success: true, versions: finalVersions };
             });
-            return { success: true, versions: finalVersions };
         } catch (error) {
             return { success: false, error: "Failed to parse versions from APIs." };
         }
@@ -50,45 +78,67 @@ const apiUtils = {
 
     searchMods: async ({ query, version, loader, page }) => {
         try {
+            const limit = 10;
+            const startIndex = (page - 1) * limit;
+
+            if (searchSessionCache.query === query && searchSessionCache.version === version && searchSessionCache.loader === loader) {
+                const paginated = searchSessionCache.results.slice(startIndex, startIndex + limit);
+                return { mods: paginated, totalPages: Math.ceil(searchSessionCache.results.length / limit) };
+            }
+
             const cfLoaderId = loader === 'fabric' ? 4 : 6;
             const mrFacets = `[["versions:${version}"],["categories:${loader}"]]`;
+            
+            const cacheKeyCF = `search_cf_${query}_${version}_${cfLoaderId}`;
+            const cacheKeyMR = `search_mr_${query}_${version}_${loader}`;
 
-            const [cfRes, mrRes] = await Promise.all([
-                axios.get(`${CF_API}/mods/search`, {
-                    headers: CF_HEADERS,
-                    params: { gameId: 432, searchFilter: query, gameVersion: version, modLoaderType: cfLoaderId, sortOrder: 'desc', pageSize: 50 }
+            const [cfData, mrData] = await Promise.all([
+                fetchWithCache(cacheKeyCF, async () => {
+                    const res = await axios.get(`${CF_API}/mods/search`, {
+                        headers: CF_HEADERS,
+                        params: { gameId: 432, searchFilter: query, gameVersion: version, modLoaderType: cfLoaderId, sortOrder: 'desc', pageSize: 50 }
+                    });
+                    return res.data.data;
                 }),
-                axios.get(`${MR_API}/search`, {
-                    headers: MR_HEADERS,
-                    params: { query: query, facets: mrFacets, limit: 50, index: "relevance" }
+                fetchWithCache(cacheKeyMR, async () => {
+                    const res = await axios.get(`${MR_API}/search`, {
+                        headers: MR_HEADERS,
+                        params: { query: query, facets: mrFacets, limit: 50, index: "relevance" }
+                    });
+                    return res.data.hits;
                 })
             ]);
 
             const matchedPairs = [];
-            for (const cfMod of cfRes.data.data) {
+            for (const cfMod of cfData) {
                 const normalizedCfName = normalizeName(cfMod.name);
-                const mrMatch = mrRes.data.hits.find(mr => mr.slug === cfMod.slug || normalizeName(mr.title) === normalizedCfName);
+                const mrMatch = mrData.find(mr => mr.slug === cfMod.slug || normalizeName(mr.title) === normalizedCfName);
                 if (mrMatch) matchedPairs.push({ cfMod, mrMatch });
             }
 
             const versionPromises = matchedPairs.map(async ({ cfMod, mrMatch }) => {
                 try {
-                    const mrVersionsRes = await axios.get(`${MR_API}/project/${mrMatch.project_id}/version`, {
-                        headers: MR_HEADERS,
-                        params: { loaders: `["${loader}"]`, game_versions: `["${version}"]` }
+                    const mrVerKey = `mr_ver_${mrMatch.project_id}_${version}_${loader}`;
+                    const mrVersionDataArray = await fetchWithCache(mrVerKey, async () => {
+                        const res = await axios.get(`${MR_API}/project/${mrMatch.project_id}/version`, {
+                            headers: MR_HEADERS,
+                            params: { loaders: `["${loader}"]`, game_versions: `["${version}"]` }
+                        });
+                        return res.data;
                     });
                     
-                    const mrVersionData = mrVersionsRes.data[0];
+                    const mrVersionData = mrVersionDataArray[0];
                     const targetFileIndex = cfMod.latestFilesIndexes.find(idx => idx.gameVersion === version && idx.modLoader === cfLoaderId);
                     let cfLatestFile = null;
 
                     if (targetFileIndex) {
                         cfLatestFile = cfMod.latestFiles.find(f => f.id === targetFileIndex.fileId);
                         if (!cfLatestFile) {
-                            try {
-                                const cfFileRes = await axios.get(`${CF_API}/mods/${cfMod.id}/files/${targetFileIndex.fileId}`, { headers: CF_HEADERS });
-                                cfLatestFile = cfFileRes.data.data;
-                            } catch (err) {}
+                            const cfFileKey = `cf_file_${cfMod.id}_${targetFileIndex.fileId}`;
+                            cfLatestFile = await fetchWithCache(cfFileKey, async () => {
+                                const res = await axios.get(`${CF_API}/mods/${cfMod.id}/files/${targetFileIndex.fileId}`, { headers: CF_HEADERS });
+                                return res.data.data;
+                            });
                         }
                     }
 
@@ -96,6 +146,10 @@ const apiUtils = {
                         return {
                             ids: { curseforge: cfMod.id, modrinth: mrMatch.project_id },
                             names: { curseforge: cfMod.name, modrinth: mrMatch.title },
+                            authors: { 
+                                curseforge: cfMod.authors && cfMod.authors.length > 0 ? cfMod.authors[0].name : 'Unknown', 
+                                modrinth: mrMatch.author || 'Unknown' 
+                            },
                             installedFiles: { curseforge: cfLatestFile.fileName, modrinth: mrVersionData.files[0].filename },
                             links: { curseforge: cfMod.links.websiteUrl, modrinth: `https://modrinth.com/mod/${mrMatch.slug}` },
                             icons: { curseforge: cfMod.logo ? cfMod.logo.thumbnailUrl : '', modrinth: mrMatch.icon_url },
@@ -110,10 +164,9 @@ const apiUtils = {
             const resolvedIntersections = await Promise.all(versionPromises);
             const intersections = resolvedIntersections.filter(mod => mod !== null);
 
-            const limit = 10;
-            const startIndex = (page - 1) * limit;
-            const paginated = intersections.slice(startIndex, startIndex + limit);
+            searchSessionCache = { query, version, loader, results: intersections };
 
+            const paginated = intersections.slice(startIndex, startIndex + limit);
             return { mods: paginated, totalPages: Math.ceil(intersections.length / limit) };
         } catch (error) {
             return { mods: [], totalPages: 0, error: error.message };
@@ -126,39 +179,64 @@ const apiUtils = {
         if (loader.toLowerCase() === 'fabric') cfLoaderId = 4;
         if (loader.toLowerCase() === 'neoforge') cfLoaderId = 6;
 
-        const checkPromises = mods.map(async (mod) => {
-            try {
+        const cfIds = mods.map(m => m.ids.curseforge).filter(Boolean);
+        const mrIds = mods.map(m => m.ids.modrinth).filter(Boolean);
+
+        let cfBulkData = [];
+        let mrBulkData = [];
+
+        try {
+            if (cfIds.length > 0) {
+                const cacheKeyCFBulk = `update_cf_bulk_${cfIds.join('_')}`;
+                cfBulkData = await fetchWithCache(cacheKeyCFBulk, async () => {
+                    const res = await axios.post(`${CF_API}/mods`, { modIds: cfIds }, { headers: CF_HEADERS });
+                    return res.data.data;
+                });
+            }
+
+            if (mrIds.length > 0) {
+                const cacheKeyMRBulk = `update_mr_bulk_${mrIds.join('_')}_${version}_${loader}`;
+                mrBulkData = await fetchWithCache(cacheKeyMRBulk, async () => {
+                    const res = await axios.get(`${MR_API}/versions`, {
+                        headers: MR_HEADERS,
+                        params: { project_ids: JSON.stringify(mrIds), loaders: JSON.stringify([loader.toLowerCase()]), game_versions: JSON.stringify([version]) }
+                    });
+                    return res.data;
+                });
+            }
+
+            for (const mod of mods) {
                 let cfFile = null, mrFile = null;
                 let cfNeedsUpdate = false, mrNeedsUpdate = false;
 
                 if (mod.ids.modrinth) {
-                    const mrRes = await axios.get(`${MR_API}/project/${mod.ids.modrinth}/version`, {
-                        headers: MR_HEADERS,
-                        params: { loaders: `["${loader}"]`, game_versions: `["${version}"]` }
-                    });
-                    if (mrRes.data && mrRes.data.length > 0) {
-                        mrFile = mrRes.data[0];
+                    const projectVersions = mrBulkData.filter(v => v.project_id === mod.ids.modrinth);
+                    if (projectVersions.length > 0) {
+                        mrFile = projectVersions[0];
                         if (mrFile.files[0].filename !== mod.installedFiles.modrinth) mrNeedsUpdate = true;
                     }
                 }
 
                 if (mod.ids.curseforge) {
-                    const cfRes = await axios.get(`${CF_API}/mods/${mod.ids.curseforge}`, { headers: CF_HEADERS });
-                    const cfMod = cfRes.data.data;
-                    const targetIndex = cfMod.latestFilesIndexes.find(idx => idx.gameVersion === version && idx.modLoader === cfLoaderId);
+                    const cfMod = cfBulkData.find(m => m.id === mod.ids.curseforge);
+                    if (cfMod) {
+                        const targetIndex = cfMod.latestFilesIndexes.find(idx => idx.gameVersion === version && idx.modLoader === cfLoaderId);
 
-                    if (targetIndex) {
-                        if (targetIndex.filename !== mod.installedFiles.curseforge) {
-                            cfNeedsUpdate = true;
-                            cfFile = cfMod.latestFiles.find(f => f.id === targetIndex.fileId);
-                            if (!cfFile) {
-                                try {
-                                    const fileRes = await axios.get(`${CF_API}/mods/${mod.ids.curseforge}/files/${targetIndex.fileId}`, { headers: CF_HEADERS });
-                                    cfFile = fileRes.data.data;
-                                } catch (err) {}
+                        if (targetIndex) {
+                            if (targetIndex.filename !== mod.installedFiles.curseforge) {
+                                cfNeedsUpdate = true;
+                                cfFile = cfMod.latestFiles.find(f => f.id === targetIndex.fileId);
+                                
+                                if (!cfFile) {
+                                    const cfFileKey = `cf_file_${cfMod.id}_${targetIndex.fileId}`;
+                                    cfFile = await fetchWithCache(cfFileKey, async () => {
+                                        const fileRes = await axios.get(`${CF_API}/mods/${mod.ids.curseforge}/files/${targetIndex.fileId}`, { headers: CF_HEADERS });
+                                        return fileRes.data.data;
+                                    });
+                                }
+                            } else {
+                                cfFile = { fileName: mod.installedFiles.curseforge, downloadUrl: mod.fileLinks.curseforge };
                             }
-                        } else {
-                            cfFile = { fileName: mod.installedFiles.curseforge, downloadUrl: mod.fileLinks.curseforge };
                         }
                     }
                 }
@@ -169,11 +247,60 @@ const apiUtils = {
                         fileLinks: { curseforge: cfFile.downloadUrl, modrinth: mrFile.files[0].url }
                     };
                 }
-            } catch (err) {}
-        });
+            }
+        } catch (err) {
+            console.error("Bulk update check failed:", err.message);
+        }
 
-        await Promise.all(checkPromises);
         return { success: true, updates };
+    },
+
+    syncMetadata: async ({ mods }) => {
+        try {
+            const cfIds = mods.map(m => m.ids.curseforge).filter(Boolean);
+            let cfBulkData = [];
+            
+            if (cfIds.length > 0) {
+                const cacheKeyCFBulk = `sync_cf_bulk_${cfIds.join('_')}`;
+                cfBulkData = await fetchWithCache(cacheKeyCFBulk, async () => {
+                    const res = await axios.post(`${CF_API}/mods`, { modIds: cfIds }, { headers: CF_HEADERS });
+                    return res.data.data;
+                });
+            }
+
+            const updatedMods = [];
+            
+            for (const mod of mods) {
+                if (!mod.authors) mod.authors = { curseforge: 'Unknown', modrinth: 'Unknown' };
+
+                if (mod.authors.curseforge === 'Unknown' && mod.ids.curseforge) {
+                    const cfMod = cfBulkData.find(m => m.id === mod.ids.curseforge);
+                    if (cfMod && cfMod.authors && cfMod.authors.length > 0) {
+                        mod.authors.curseforge = cfMod.authors[0].name;
+                    }
+                }
+
+                if (mod.authors.modrinth === 'Unknown' && mod.ids.modrinth) {
+                    try {
+                        const mrVerKey = `mr_author_${mod.ids.modrinth}`;
+                        const authorName = await fetchWithCache(mrVerKey, async () => {
+                            const mrRes = await axios.get(`${MR_API}/search`, {
+                                headers: MR_HEADERS,
+                                params: { facets: `[["project_id:${mod.ids.modrinth}"]]`, limit: 1 }
+                            });
+                            return mrRes.data.hits.length > 0 ? mrRes.data.hits[0].author : 'Unknown';
+                        });
+                        mod.authors.modrinth = authorName;
+                    } catch (err) {}
+                }
+                
+                updatedMods.push(mod);
+            }
+
+            return { success: true, mods: updatedMods };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
     }
 };
 
