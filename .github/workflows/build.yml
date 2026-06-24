@@ -1,13 +1,25 @@
-name: Build Incursion
+name: Build and Release Incursion
 
-# This tells GitHub WHEN to run the script. 
-# workflow_dispatch means you trigger it manually via a button on GitHub.
+# Trigger the workflow automatically when you push to the 'main' branch
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch: 
+
+# Ensure the GitHub Action has permission to create a release
+permissions:
+  contents: write
+
+# ==========================================
+# CHANGE THIS VARIABLE BEFORE YOU PUSH!
+# This determines the Release Tag (e.g., v1.0.1)
+# ==========================================
+env:
+  RELEASE_VERSION: "v1.0.1"
 
 jobs:
   build:
-    # This matrix tells GitHub to spin up 3 separate cloud computers simultaneously.
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -20,26 +32,27 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22' # Use the Node version you are currently developing on
+          node-version: '22' 
 
       - name: Install Dependencies
         run: npm install
 
-      # Because npm run build triggers electron-builder, it will automatically 
-      # detect the OS of the runner and build the .exe, .dmg, or .AppImage accordingly!
       - name: Build Application
         run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # This grabs the finished files from the dist/ folder and uploads them 
-      # so you can download them from the GitHub dashboard.
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      # directly to the GitHub Releases page under the tag you specified above.
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
         with:
-          name: Incursion-Release-${{ matrix.os }}
-          path: |
+          tag_name: ${{ env.RELEASE_VERSION }}
+          name: "Incursion ${{ env.RELEASE_VERSION }}"
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: |
             dist/*.exe
             dist/*.dmg
             dist/*.AppImage
-          retention-days: 7
