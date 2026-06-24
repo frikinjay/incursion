@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
-const fs = require('fs-extra'); // Required for outputJson/readJson
+const fs = require('fs-extra');
 const axios = require('axios');
 
 const CF_API = 'https://api.curseforge.com/v1';
@@ -125,21 +125,21 @@ ipcMain.handle('search-mods', async (event, { query, version, loader, page }) =>
                 headers: CF_HEADERS,
                 params: { 
                     gameId: 432, 
-                    searchFilter: query, 
-                    gameVersion: version, 
+                    searchFilter: query,
+                    gameVersion: version,
                     modLoaderType: cfLoaderId,
-                    sortField: 2,
+                    //sortField: 6,
                     sortOrder: 'desc',
-                    pageSize: 50 
+                    pageSize: 50
                 }
             }),
             axios.get(`${MR_API}/search`, {
                 headers: MR_HEADERS,
                 params: { 
-                    query: query, 
-                    facets: mrFacets, 
+                    query: query,
+                    facets: mrFacets,
                     limit: 50,
-                    index: "downloads" 
+                    index: "relevance"
                 }
             })
         ]);
@@ -170,13 +170,28 @@ ipcMain.handle('search-mods', async (event, { query, version, loader, page }) =>
                 });
                 
                 const mrVersionData = mrVersionsRes.data[0];
-                
-                const cfLoaderName = loader.toLowerCase() === 'neoforge' ? 'NeoForge' : 'Fabric';
-                
-                const cfLatestFile = cfMod.latestFiles.find(f => 
-                    f.gameVersions.includes(version) && 
-                    f.gameVersions.some(v => v.toLowerCase() === cfLoaderName.toLowerCase())
+
+                const cfLoaderId = loader.toLowerCase() === 'neoforge' ? 6 : 4;
+
+                const targetFileIndex = cfMod.latestFilesIndexes.find(idx => 
+                    idx.gameVersion === version && 
+                    idx.modLoader === cfLoaderId
                 );
+
+                let cfLatestFile = null;
+
+                if (targetFileIndex) {
+                    cfLatestFile = cfMod.latestFiles.find(f => f.id === targetFileIndex.fileId);
+
+                    if (!cfLatestFile) {
+                        try {
+                            const cfFileRes = await axios.get(`${CF_API}/mods/${cfMod.id}/files/${targetFileIndex.fileId}`, { headers: CF_HEADERS });
+                            cfLatestFile = cfFileRes.data.data;
+                        } catch (err) {
+                            console.error(`Failed to fetch specific CF file for ${cfMod.name}`);
+                        }
+                    }
+                }
 
                 if (mrVersionData && cfLatestFile && cfLatestFile.downloadUrl) {
                     return {
@@ -282,41 +297,61 @@ ipcMain.handle('get-versions', async () => {
 ipcMain.handle('check-mod-updates', async (event, { mods, version, loader }) => {
     const updates = {};
     
-    const cfLoaderName = loader.toLowerCase() === 'neoforge' ? 'NeoForge' : 'Fabric';
+    let cfLoaderId = 1;
+    if (loader.toLowerCase() === 'fabric') cfLoaderId = 4;
+    if (loader.toLowerCase() === 'neoforge') cfLoaderId = 6;
 
     const checkPromises = mods.map(async (mod) => {
         try {
             let cfFile = null, mrFile = null;
-            let hasUpdate = false;
+            let cfNeedsUpdate = false, mrNeedsUpdate = false;
 
             if (mod.ids.modrinth) {
                 const mrRes = await axios.get(`${MR_API}/project/${mod.ids.modrinth}/version`, {
                     headers: MR_HEADERS,
                     params: { loaders: `["${loader}"]`, game_versions: `["${version}"]` }
                 });
+                
                 if (mrRes.data && mrRes.data.length > 0) {
                     mrFile = mrRes.data[0];
-                    if (mrFile.files[0].filename !== mod.installedFiles.modrinth) hasUpdate = true;
+                    if (mrFile.files[0].filename !== mod.installedFiles.modrinth) {
+                        mrNeedsUpdate = true;
+                    }
                 }
             }
 
             if (mod.ids.curseforge) {
                 const cfRes = await axios.get(`${CF_API}/mods/${mod.ids.curseforge}`, { headers: CF_HEADERS });
-                const latestFiles = cfRes.data.data.latestFiles;
+                const cfMod = cfRes.data.data;
                 
-                const validFile = latestFiles.find(f => 
-                    f.gameVersions.includes(version) && 
-                    (f.gameVersions.includes(cfLoaderName) || f.gameVersions.includes(cfLoaderName.toLowerCase()))
+                const targetIndex = cfMod.latestFilesIndexes.find(idx => 
+                    idx.gameVersion === version && 
+                    idx.modLoader === cfLoaderId
                 );
-                if (validFile) {
-                    cfFile = validFile;
-                    if (cfFile.fileName !== mod.installedFiles.curseforge) hasUpdate = true;
+
+                if (targetIndex) {
+                    if (targetIndex.filename !== mod.installedFiles.curseforge) {
+                        cfNeedsUpdate = true;
+                        
+                        cfFile = cfMod.latestFiles.find(f => f.id === targetIndex.fileId);
+
+                        if (!cfFile) {
+                            try {
+                                const fileRes = await axios.get(`${CF_API}/mods/${mod.ids.curseforge}/files/${targetIndex.fileId}`, { headers: CF_HEADERS });
+                                cfFile = fileRes.data.data;
+                            } catch (err) {
+                                console.error(`Failed to fetch specific CF update file for ${cfMod.name}`);
+                            }
+                        }
+                    } else {
+                        cfFile = { fileName: mod.installedFiles.curseforge, downloadUrl: mod.fileLinks.curseforge };
+                    }
                 }
             }
 
-            if (hasUpdate && cfFile && mrFile) {
+            if ((cfNeedsUpdate || mrNeedsUpdate) && cfFile && cfFile.downloadUrl && mrFile) {
                 updates[mod.ids.curseforge] = {
-                    installedFiles: { curseforge: cfFile.fileName, modrinth: mrFile.files[0].filename },
+                    installedFiles: { curseforge: cfFile.fileName || cfFile.filename, modrinth: mrFile.files[0].filename },
                     fileLinks: { curseforge: cfFile.downloadUrl, modrinth: mrFile.files[0].url }
                 };
             }
