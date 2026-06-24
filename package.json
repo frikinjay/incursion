@@ -24,7 +24,7 @@
       "target": "dmg"
     },
     "linux": {
-      "target": "tar.gz",
+      "target": "AppImage",
       "category": "Game",
       "syncDesktopName": true
     }
