@@ -237,7 +237,10 @@ const apiUtils = {
                                 curseforge: cfLatestFile ? cfLatestFile.downloadUrl : null, 
                                 modrinth: mrVersionData ? mrVersionData.files[0].url : null 
                             },
-                            meta: { cfFileId: cfLatestFile ? cfLatestFile.id : null }
+                            meta: { 
+                                cfFileId: cfLatestFile ? cfLatestFile.id : null,
+                                mrVersionId: mrVersionData ? mrVersionData.id : null
+                            }
                         };
                     }
                 } catch (err) { return null; }
@@ -289,7 +292,11 @@ const apiUtils = {
 
                         if (projectVersions && projectVersions.length > 0) {
                             mrFile = projectVersions[0];
-                            if (mrFile.files[0].filename !== mod.installedFiles.modrinth) mrNeedsUpdate = true;
+                            if (mod.meta && mod.meta.mrVersionId) {
+                                if (mrFile.id !== mod.meta.mrVersionId) mrNeedsUpdate = true;
+                            } else if (mrFile.files[0].filename !== mod.installedFiles.modrinth) {
+                                mrNeedsUpdate = true;
+                            }
                         }
                     } catch (err) {}
                 }
@@ -299,8 +306,13 @@ const apiUtils = {
                     if (cfMod) {
                         const targetIndex = cfMod.latestFilesIndexes.find(idx => idx.gameVersion === version && idx.modLoader === cfLoaderId);
                         if (targetIndex) {
-                            if (targetIndex.filename !== mod.installedFiles.curseforge) {
+                            if (mod.meta && mod.meta.cfFileId) {
+                                if (targetIndex.fileId !== mod.meta.cfFileId) cfNeedsUpdate = true;
+                            } else if (targetIndex.filename !== mod.installedFiles.curseforge) {
                                 cfNeedsUpdate = true;
+                            }
+
+                            if (cfNeedsUpdate) {
                                 cfFile = cfMod.latestFiles.find(f => f.id === targetIndex.fileId);
                                 if (!cfFile) {
                                     const cfFileKey = `cf_file_${cfMod.id}_${targetIndex.fileId}`;
@@ -309,8 +321,6 @@ const apiUtils = {
                                         return fileRes.data.data;
                                     });
                                 }
-                            } else {
-                                cfFile = { fileName: mod.installedFiles.curseforge, downloadUrl: mod.fileLinks.curseforge };
                             }
                         }
                     }
@@ -327,7 +337,10 @@ const apiUtils = {
                             curseforge: cfFile ? cfFile.downloadUrl : null, 
                             modrinth: mrFile ? mrFile.files[0].url : null 
                         },
-                        meta: { cfFileId: cfFile ? cfFile.id : null }
+                        meta: { 
+                            cfFileId: cfFile ? cfFile.id : (mod.meta ? mod.meta.cfFileId : null),
+                            mrVersionId: mrFile ? mrFile.id : (mod.meta ? mod.meta.mrVersionId : null)
+                        }
                     };
                 }
 

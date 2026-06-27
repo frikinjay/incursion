@@ -12,7 +12,6 @@ window.DetailsManager = {
             if (progressBar) progressBar.style.width = `${percent}%`;
         });
 
-        // Listen for export progress
         DetailsManager._cleanupExportProgress = window.api.onExportProgress((percent) => {
             const progressBar = document.getElementById('actionProgressBar');
             if (progressBar) progressBar.style.width = `${percent}%`;
@@ -54,8 +53,8 @@ window.DetailsManager = {
 
             if (res.success) {
                 AppState.pendingUpdates = res.updates;
-                AppState.currentActivePack.pendingUpdates = AppState.pendingUpdates;
-                await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+                
+                await window.api.savePendingUpdates({ packPath: AppState.currentActivePack.path, updates: AppState.pendingUpdates });
 
                 const updateCount = Object.keys(AppState.pendingUpdates).length;
                 document.getElementById('updateAllBtn').disabled = updateCount === 0;
@@ -77,13 +76,17 @@ window.DetailsManager = {
 
             let i = 0;
             for (const modId of updateIds) {
-                const modToUpdate = AppState.currentActivePack.mods.find(m => m.ids.curseforge === modId || m.ids.modrinth === modId);
+                const modToUpdate = AppState.currentActivePack.mods.find(m => String(m.ids.curseforge) === String(modId) || String(m.ids.modrinth) === String(modId));
+                
                 if (modToUpdate) {
                     const updateData = AppState.pendingUpdates[modId];
                     await window.api.removeModFiles({ packPath: AppState.currentActivePack.path, files: modToUpdate.installedFiles });
+                    
                     modToUpdate.installedFiles = updateData.installedFiles;
                     modToUpdate.fileLinks = updateData.fileLinks;
                     modToUpdate.meta = updateData.meta;
+                    modToUpdate.dateAdded = Date.now(); 
+                    
                     await window.api.downloadMod({ mod: modToUpdate, packPath: AppState.currentActivePack.path });
                 }
                 i++;
@@ -91,7 +94,8 @@ window.DetailsManager = {
             }
 
             AppState.pendingUpdates = {};
-            AppState.currentActivePack.pendingUpdates = {};
+            
+            await window.api.savePendingUpdates({ packPath: AppState.currentActivePack.path, updates: {} });
             await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
             
             setTimeout(() => { progressContainer.style.display = 'none'; }, 1000);
@@ -147,8 +151,7 @@ window.DetailsManager = {
             await window.api.clearApiCache();
             AppState.pendingUpdates = {};
             if (AppState.currentActivePack) {
-                AppState.currentActivePack.pendingUpdates = {};
-                await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+                await window.api.savePendingUpdates({ packPath: AppState.currentActivePack.path, updates: {} });
             }
 
             UI.showSuccess("Caches Cleared! Ready for fresh updates.");
@@ -193,7 +196,9 @@ window.DetailsManager = {
         if (!res?.success) { UI.showError(`Could not access metadata.`); return; }
 
         AppState.currentActivePack = res.metadata;
-        AppState.pendingUpdates = AppState.currentActivePack.pendingUpdates || {};
+        
+        const pendingRes = await window.api.loadPendingUpdates(packPath);
+        AppState.pendingUpdates = pendingRes?.success ? pendingRes.updates : {};
         document.getElementById('updateAllBtn').disabled = Object.keys(AppState.pendingUpdates).length === 0;
 
         document.getElementById('detailPackIcon').src = AppState.currentActivePack.icon || 'icon.svg';
@@ -366,8 +371,7 @@ window.DetailsManager = {
 
                 if (res.success && res.updates[uniqueId]) {
                     AppState.pendingUpdates[uniqueId] = res.updates[uniqueId];
-                    AppState.currentActivePack.pendingUpdates = AppState.pendingUpdates;
-                    await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+                    await window.api.savePendingUpdates({ packPath: AppState.currentActivePack.path, updates: AppState.pendingUpdates });
 
                     UI.showSuccess("Update found!");
                     document.getElementById('updateAllBtn').disabled = false;
@@ -392,14 +396,17 @@ window.DetailsManager = {
                     const btn = e.target;
                     btn.innerText = 'Updating...'; btn.disabled = true;
                     await window.api.removeModFiles({ packPath: AppState.currentActivePack.path, files: mod.installedFiles });
+                    
                     mod.installedFiles = updateData.installedFiles;
                     mod.fileLinks = updateData.fileLinks;
                     mod.meta = updateData.meta;
                     mod.dateAdded = Date.now(); 
+                    
                     await window.api.downloadMod({ mod: mod, packPath: AppState.currentActivePack.path });
                     
                     delete AppState.pendingUpdates[uniqueId];
-                    AppState.currentActivePack.pendingUpdates = AppState.pendingUpdates;
+                    
+                    await window.api.savePendingUpdates({ packPath: AppState.currentActivePack.path, updates: AppState.pendingUpdates });
                     await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
                     
                     document.getElementById('updateAllBtn').disabled = Object.keys(AppState.pendingUpdates).length === 0;
@@ -413,7 +420,7 @@ window.DetailsManager = {
                 
                 if (AppState.pendingUpdates[uniqueId]) {
                     delete AppState.pendingUpdates[uniqueId];
-                    AppState.currentActivePack.pendingUpdates = AppState.pendingUpdates;
+                    await window.api.savePendingUpdates({ packPath: AppState.currentActivePack.path, updates: AppState.pendingUpdates });
                 }
                 
                 await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });

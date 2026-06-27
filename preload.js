@@ -10,9 +10,12 @@ contextBridge.exposeInMainWorld('api', {
     saveGlobalPacks: (packs) => ipcRenderer.invoke('save-global-packs', packs),
     savePackMetadata: (data) => ipcRenderer.invoke('save-pack-metadata', data),
     loadPackMetadata: (packPath) => ipcRenderer.invoke('load-pack-metadata', packPath),
+    
+    savePendingUpdates: (data) => ipcRenderer.invoke('save-pending-updates', data),
+    loadPendingUpdates: (packPath) => ipcRenderer.invoke('load-pending-updates', packPath),
+    
     removeModFiles: (data) => ipcRenderer.invoke('remove-mod-files', data),
 
-    // Progress Listeners
     onDownloadProgress: (callback) => {
         const handler = (event, data) => callback(data);
         ipcRenderer.on('download-progress', handler);
@@ -29,12 +32,10 @@ contextBridge.exposeInMainWorld('api', {
         return () => ipcRenderer.removeListener('export-progress', handler);
     },
 
-    // Window Controls
     minimizeWindow: () => ipcRenderer.send('window-min'),
     maximizeWindow: () => ipcRenderer.send('window-max'),
     closeWindow: () => ipcRenderer.send('window-close'),
 
-    // APIs & Exports
     checkModUpdates: (params) => ipcRenderer.invoke('check-mod-updates', params),
     getApiKeys: () => ipcRenderer.invoke('get-api-keys'),
     saveApiKeys: (keys) => ipcRenderer.invoke('save-api-keys', keys),

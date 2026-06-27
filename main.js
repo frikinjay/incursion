@@ -36,11 +36,14 @@ ipcMain.handle('get-global-packs', async () => await storage.getGlobalPacks());
 ipcMain.handle('save-global-packs', async (event, packs) => await storage.saveGlobalPacks(packs));
 ipcMain.handle('save-pack-metadata', async (event, { packPath, metadata }) => await storage.savePackMetadata(packPath, metadata));
 ipcMain.handle('load-pack-metadata', async (event, packPath) => await storage.loadPackMetadata(packPath));
+
+ipcMain.handle('save-pending-updates', async (event, { packPath, updates }) => await storage.savePendingUpdates(packPath, updates));
+ipcMain.handle('load-pending-updates', async (event, packPath) => await storage.loadPendingUpdates(packPath));
+
 ipcMain.handle('remove-mod-files', async (event, { packPath, files }) => await storage.removeModFiles(packPath, files));
 ipcMain.handle('clear-api-cache', async () => await storage.clearApiCache());
 ipcMain.handle('download-mod', async (event, { mod, packPath }) => await storage.downloadModFiles(mod, packPath));
 
-// --- EXPORT ROUTES ---
 ipcMain.handle('export-pack-cf', async (event, { metadata, exportDir }) => {
     try { 
         return await storage.exportCurseForgePack(metadata, exportDir, (percent) => {
@@ -57,7 +60,6 @@ ipcMain.handle('export-pack-mr', async (event, { metadata, exportDir }) => {
     } catch (err) { return { success: false, error: err.message }; }
 });
 
-// --- API ROUTES ---
 ipcMain.handle('get-api-keys', async () => await apiUtils.updateApiHeaders());
 ipcMain.handle('save-api-keys', async (event, keys) => {
     const res = await storage.saveSettings(keys);

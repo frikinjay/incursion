@@ -13,51 +13,21 @@ const loaderVersionsCachePath = path.join(app.getPath('userData'), 'loader-versi
 
 module.exports = {
     // --- CACHING ---
-    getVersionsCache: async () => {
-        if (await fs.pathExists(versionsCachePath)) return await fs.readJson(versionsCachePath);
-        return null;
-    },
-    saveVersionsCache: async (versions) => {
-        await fs.outputJson(versionsCachePath, { timestamp: Date.now(), versions }, { spaces: 4 });
-    },
-    getLoaderVersionsCache: async () => {
-        if (await fs.pathExists(loaderVersionsCachePath)) return await fs.readJson(loaderVersionsCachePath);
-        return {};
-    },
-    saveLoaderVersionsCache: async (cache) => {
-        await fs.outputJson(loaderVersionsCachePath, cache, { spaces: 4 });
-    },
-    getApiCache: async () => {
-        if (await fs.pathExists(apiCachePath)) return await fs.readJson(apiCachePath);
-        return {};
-    },
-    saveApiCache: async (cacheData) => {
-        await fs.outputJson(apiCachePath, cacheData, { spaces: 4 });
-    },
-    clearApiCache: async () => {
-        if (await fs.pathExists(apiCachePath)) await fs.remove(apiCachePath);
-        return { success: true };
-    },
+    getVersionsCache: async () => { if (await fs.pathExists(versionsCachePath)) return await fs.readJson(versionsCachePath); return null; },
+    saveVersionsCache: async (versions) => { await fs.outputJson(versionsCachePath, { timestamp: Date.now(), versions }, { spaces: 4 }); },
+    getLoaderVersionsCache: async () => { if (await fs.pathExists(loaderVersionsCachePath)) return await fs.readJson(loaderVersionsCachePath); return {}; },
+    saveLoaderVersionsCache: async (cache) => { await fs.outputJson(loaderVersionsCachePath, cache, { spaces: 4 }); },
+    getApiCache: async () => { if (await fs.pathExists(apiCachePath)) return await fs.readJson(apiCachePath); return {}; },
+    saveApiCache: async (cacheData) => { await fs.outputJson(apiCachePath, cacheData, { spaces: 4 }); },
+    clearApiCache: async () => { if (await fs.pathExists(apiCachePath)) await fs.remove(apiCachePath); return { success: true }; },
 
-    // --- SETTINGS ---
-    getSettings: async () => {
-        if (await fs.pathExists(settingsPath)) return await fs.readJson(settingsPath);
-        return {};
-    },
-    saveSettings: async (keys) => {
-        await fs.outputJson(settingsPath, keys, { spaces: 4 });
-        return { success: true };
-    },
+    getSettings: async () => { if (await fs.pathExists(settingsPath)) return await fs.readJson(settingsPath); return {}; },
+    saveSettings: async (keys) => { await fs.outputJson(settingsPath, keys, { spaces: 4 }); return { success: true }; },
 
     // --- PACK MANAGEMENT ---
-    getGlobalPacks: async () => {
-        if (await fs.pathExists(globalCachePath)) return await fs.readJson(globalCachePath);
-        return [];
-    },
-    saveGlobalPacks: async (packs) => {
-        await fs.outputJson(globalCachePath, packs, { spaces: 4 });
-        return { success: true };
-    },
+    getGlobalPacks: async () => { if (await fs.pathExists(globalCachePath)) return await fs.readJson(globalCachePath); return []; },
+    saveGlobalPacks: async (packs) => { await fs.outputJson(globalCachePath, packs, { spaces: 4 }); return { success: true }; },
+    
     savePackMetadata: async (packPath, metadata) => {
         try {
             const metaFilePath = path.join(packPath, 'pack-metadata.json');
@@ -65,6 +35,7 @@ module.exports = {
             return { success: true };
         } catch (error) { return { success: false, error: error.message }; }
     },
+    
     loadPackMetadata: async (packPath) => {
         try {
             const metaFilePath = path.join(packPath, 'pack-metadata.json');
@@ -76,7 +47,26 @@ module.exports = {
         } catch (error) { return { success: false, error: error.message }; }
     },
 
-    // --- DOWNLOADING & REMOVAL ---
+    // --- UPDATE CACHE ---
+    savePendingUpdates: async (packPath, updates) => {
+        try {
+            const cachePath = path.join(packPath, 'pending_updates.json');
+            await fs.outputJson(cachePath, updates, { spaces: 4 });
+            return { success: true };
+        } catch (error) { return { success: false, error: error.message }; }
+    },
+
+    loadPendingUpdates: async (packPath) => {
+        try {
+            const cachePath = path.join(packPath, 'pending_updates.json');
+            if (await fs.pathExists(cachePath)) {
+                const data = await fs.readJson(cachePath);
+                return { success: true, updates: data };
+            }
+            return { success: true, updates: {} };
+        } catch (error) { return { success: false, error: error.message, updates: {} }; }
+    },
+
     removeModFiles: async (packPath, files) => {
         try {
             if (!files) return { success: false, error: "No files specified" };
@@ -118,7 +108,6 @@ module.exports = {
 
     // --- PACK EXPORTERS ---
     exportCurseForgePack: async (metadata, exportDir) => {
-        const { default: archiver } = await import('archiver');
         const safeName = metadata.name.replace(/[^a-zA-Z0-9_-]/g, '_');
         const zipName = `${safeName}-${metadata.version || '1.0.0'}.zip`;
         const finalPath = path.join(exportDir, zipName);
@@ -131,7 +120,6 @@ module.exports = {
             if (!m.meta?.cfFileId && m.ids.curseforge) {
                 try {
                     const gameVersion = metadata.gameVersion || '1.21.1';
-                    
                     const loaderMap = { fabric: 4, neoforge: 6 };
                     const cfLoaderId = loaderMap[metadata.loader?.toLowerCase()] || 4; 
                     
@@ -192,7 +180,6 @@ module.exports = {
     },
 
     exportModrinthPack: async (metadata, exportDir) => {
-        const { default: archiver } = await import('archiver');
         const safeName = metadata.name.replace(/[^a-zA-Z0-9_-]/g, '_');
         const packName = `${safeName}-${metadata.version || '1.0.0'}.mrpack`;
         const finalPath = path.join(exportDir, packName);
