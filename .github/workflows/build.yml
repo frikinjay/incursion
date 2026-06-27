@@ -13,7 +13,7 @@ permissions:
 # CHANGE THIS VARIABLE BEFORE PUSH!
 # ==========================================
 env:
-  RELEASE_VERSION: "v1.0.6"
+  RELEASE_VERSION: "v1.0.7"
 
 jobs:
   build:

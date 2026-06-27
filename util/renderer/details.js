@@ -3,9 +3,17 @@ window.DetailsManager = {
     visibleCount: 10,
     bufferCount: 5,
     allMods: [],
+    _cleanupUpdateProgress: null,
+    _cleanupExportProgress: null,
 
     init: () => {
-        window.api.onUpdateProgress((percent) => {
+        DetailsManager._cleanupUpdateProgress = window.api.onUpdateProgress((percent) => {
+            const progressBar = document.getElementById('actionProgressBar');
+            if (progressBar) progressBar.style.width = `${percent}%`;
+        });
+
+        // Listen for export progress
+        DetailsManager._cleanupExportProgress = window.api.onExportProgress((percent) => {
             const progressBar = document.getElementById('actionProgressBar');
             if (progressBar) progressBar.style.width = `${percent}%`;
         });
@@ -26,16 +34,13 @@ window.DetailsManager = {
             UI.switchView('search', AppViews);
         });
 
-        // Filters
         document.getElementById('installedSearchInput').addEventListener('input', (e) => { AppState.installedSearchQuery = e.target.value; DetailsManager.sortAndRefresh(); });
         document.getElementById('installedEnvSelect').addEventListener('change', (e) => { AppState.installedEnvFilter = e.target.value; DetailsManager.sortAndRefresh(); });
         document.getElementById('installedPlatformSelect').addEventListener('change', (e) => { AppState.installedPlatformFilter = e.target.value; DetailsManager.sortAndRefresh(); });
         document.getElementById('packSortSelect').addEventListener('change', (e) => { AppState.currentSortMode = e.target.value; DetailsManager.sortAndRefresh(); });
 
-        // Virtual Scroll Listener
         document.getElementById('virtualScrollContainer').addEventListener('scroll', () => { DetailsManager.renderVirtualChunk(); });
 
-        // Update Checking
         document.getElementById('checkUpdatesBtn').addEventListener('click', async () => {
             const btn = document.getElementById('checkUpdatesBtn');
             btn.innerText = 'Checking...'; btn.disabled = true;
@@ -44,19 +49,17 @@ window.DetailsManager = {
             const progressBar = document.getElementById('actionProgressBar');
             progressContainer.style.display = 'block'; progressBar.style.width = '0%';
 
-            const res = await window.api.checkModUpdates({
-                mods: AppState.currentActivePack.mods,
-                version: AppState.currentActivePack.gameVersion, 
-                loader: AppState.currentActivePack.loader
-            });
-
+            const res = await window.api.checkModUpdates({ mods: AppState.currentActivePack.mods, version: AppState.currentActivePack.gameVersion, loader: AppState.currentActivePack.loader });
             setTimeout(() => { progressContainer.style.display = 'none'; }, 1000);
 
             if (res.success) {
                 AppState.pendingUpdates = res.updates;
+                AppState.currentActivePack.pendingUpdates = AppState.pendingUpdates;
+                await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+
                 const updateCount = Object.keys(AppState.pendingUpdates).length;
                 document.getElementById('updateAllBtn').disabled = updateCount === 0;
-                UI.showError(updateCount > 0 ? `Found ${updateCount} updates!` : "All mods are up to date.");
+                UI.showSuccess(updateCount > 0 ? `Found ${updateCount} updates!` : "All mods are up to date.");
                 DetailsManager.sortAndRefresh();
             } else { UI.showError("Failed to check for updates."); }
 
@@ -87,13 +90,14 @@ window.DetailsManager = {
                 progressBar.style.width = `${Math.round((i / updateIds.length) * 100)}%`;
             }
 
-            await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
             AppState.pendingUpdates = {};
+            AppState.currentActivePack.pendingUpdates = {};
+            await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
             
             setTimeout(() => { progressContainer.style.display = 'none'; }, 1000);
             DetailsManager.sortAndRefresh();
             btn.innerText = 'Update All'; btn.disabled = true; 
-            UI.showError("All mods updated successfully!");
+            UI.showSuccess("All mods updated successfully!");
         });
 
         document.getElementById('exportCFBtn').addEventListener('click', () => DetailsManager.exportPack('cf'));
@@ -110,7 +114,7 @@ window.DetailsManager = {
             const progressBar = document.getElementById('actionProgressBar');
             progressContainer.style.display = 'block'; progressBar.style.width = '0%';
 
-            UI.showError("Syncing metadata...");
+            UI.showSuccess("Syncing metadata...");
             const syncRes = await window.api.syncMetadata({ mods: modsToRedownload });
             if (syncRes.success) {
                 AppState.currentActivePack.mods = syncRes.mods;
@@ -133,14 +137,23 @@ window.DetailsManager = {
             btn.innerText = 'Redownload All'; btn.disabled = false;
 
             if (failCount > 0) UI.showError(`Redownloaded ${successCount} mods. ${failCount} failed.`);
-            else UI.showError(`Successfully redownloaded all ${successCount} mods!`);
+            else UI.showSuccess(`Successfully redownloaded all ${successCount} mods!`);
         });
 
         document.getElementById('refreshInstalledCacheBtn').addEventListener('click', async () => {
             const btn = document.getElementById('refreshInstalledCacheBtn');
             btn.innerText = 'Clearing...'; btn.disabled = true;
+            
             await window.api.clearApiCache();
-            UI.showError("Cache Cleared! Ready for fresh updates.");
+            AppState.pendingUpdates = {};
+            if (AppState.currentActivePack) {
+                AppState.currentActivePack.pendingUpdates = {};
+                await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+            }
+
+            UI.showSuccess("Caches Cleared! Ready for fresh updates.");
+            DetailsManager.sortAndRefresh();
+            document.getElementById('updateAllBtn').disabled = true;
             btn.innerText = 'Refresh Cache'; btn.disabled = false;
         });
     },
@@ -149,23 +162,40 @@ window.DetailsManager = {
         const exportDir = await window.api.selectDirectory();
         if (!exportDir) return;
 
-        if (type === 'cf' || type === 'both') {
-            const res = await window.api.exportPackCF({ metadata: AppState.currentActivePack, exportDir });
-            if (res.success) UI.showError(`CurseForge archive exported!`);
-            else UI.showError(`CF Export failed: ${res.error}`);
-        }
-        if (type === 'mr' || type === 'both') {
-            const res = await window.api.exportPackMR({ metadata: AppState.currentActivePack, exportDir });
-            if (res.success) UI.showError(`Modrinth archive exported!`);
-            else UI.showError(`MR Export failed: ${res.error}`);
+        const btns = [document.getElementById('exportCFBtn'), document.getElementById('exportMRBtn'), document.getElementById('exportPacksBtn')];
+        btns.forEach(b => b.disabled = true);
+
+        const progressContainer = document.getElementById('actionProgressContainer');
+        const progressBar = document.getElementById('actionProgressBar');
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '0%';
+
+        try {
+            if (type === 'cf' || type === 'both') {
+                const res = await window.api.exportPackCF({ metadata: AppState.currentActivePack, exportDir });
+                if (res.success) UI.showSuccess(`CurseForge archive exported!`);
+                else UI.showError(`CF Export failed: ${res.error}`);
+            }
+            if (type === 'mr' || type === 'both') {
+                progressBar.style.width = '0%';
+                const res = await window.api.exportPackMR({ metadata: AppState.currentActivePack, exportDir });
+                if (res.success) UI.showSuccess(`Modrinth archive exported!`);
+                else UI.showError(`MR Export failed: ${res.error}`);
+            }
+        } finally {
+            setTimeout(() => { progressContainer.style.display = 'none'; }, 1000);
+            btns.forEach(b => b.disabled = false);
         }
     },
 
     openPackDetails: async (packPath) => {
         const res = await window.api.loadPackMetadata(packPath);
-        if (!res || !res.success) { UI.showError(`Could not access metadata.`); return; }
-        
-        AppState.currentActivePack = res.metadata;   // ← unwrap here
+        if (!res?.success) { UI.showError(`Could not access metadata.`); return; }
+
+        AppState.currentActivePack = res.metadata;
+        AppState.pendingUpdates = AppState.currentActivePack.pendingUpdates || {};
+        document.getElementById('updateAllBtn').disabled = Object.keys(AppState.pendingUpdates).length === 0;
+
         document.getElementById('detailPackIcon').src = AppState.currentActivePack.icon || 'icon.svg';
         document.getElementById('detailPackName').innerText = AppState.currentActivePack.name;
         document.getElementById('detailPackMetaSub').innerText = `v${AppState.currentActivePack.version || '1.0.0'} | ${AppState.currentActivePack.loader.toUpperCase()} | ${AppState.currentActivePack.gameVersion}`;
@@ -247,7 +277,7 @@ window.DetailsManager = {
             const mod = DetailsManager.allMods[i];
             const item = document.createElement('div');
             item.className = 'installed-mod-item';
-            item.style.height = `${DetailsManager.rowHeight - 16}px`; // Subtract margin
+            item.style.height = `${DetailsManager.rowHeight - 16}px`;
             
             const hasCF = !!mod.ids.curseforge;
             const hasMR = !!mod.ids.modrinth;
@@ -336,11 +366,14 @@ window.DetailsManager = {
 
                 if (res.success && res.updates[uniqueId]) {
                     AppState.pendingUpdates[uniqueId] = res.updates[uniqueId];
-                    UI.showError("Update found!");
+                    AppState.currentActivePack.pendingUpdates = AppState.pendingUpdates;
+                    await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+
+                    UI.showSuccess("Update found!");
                     document.getElementById('updateAllBtn').disabled = false;
                     DetailsManager.sortAndRefresh();
                 } else {
-                    UI.showError("Mod is up to date.");
+                    UI.showSuccess("Mod is up to date.");
                     btn.innerText = 'Check'; btn.disabled = false;
                 }
             });
@@ -364,8 +397,11 @@ window.DetailsManager = {
                     mod.meta = updateData.meta;
                     mod.dateAdded = Date.now(); 
                     await window.api.downloadMod({ mod: mod, packPath: AppState.currentActivePack.path });
-                    await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+                    
                     delete AppState.pendingUpdates[uniqueId];
+                    AppState.currentActivePack.pendingUpdates = AppState.pendingUpdates;
+                    await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
+                    
                     document.getElementById('updateAllBtn').disabled = Object.keys(AppState.pendingUpdates).length === 0;
                     DetailsManager.sortAndRefresh();
                 });
@@ -374,14 +410,19 @@ window.DetailsManager = {
             item.querySelector('.remove-btn').addEventListener('click', async () => {
                 await window.api.removeModFiles({ packPath: AppState.currentActivePack.path, files: mod.installedFiles });
                 AppState.currentActivePack.mods = AppState.currentActivePack.mods.filter(m => (m.ids.curseforge !== mod.ids.curseforge) || (m.ids.modrinth !== mod.ids.modrinth));
-                if (AppState.pendingUpdates[uniqueId]) delete AppState.pendingUpdates[uniqueId];
+                
+                if (AppState.pendingUpdates[uniqueId]) {
+                    delete AppState.pendingUpdates[uniqueId];
+                    AppState.currentActivePack.pendingUpdates = AppState.pendingUpdates;
+                }
+                
                 await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
                 DetailsManager.sortAndRefresh();
             });
 
             item.querySelectorAll('.copy-link-btn').forEach(copyBtn => {
                 copyBtn.addEventListener('click', (e) => {
-                    e.stopPropagation(); navigator.clipboard.writeText(copyBtn.dataset.url); UI.showError("Link copied to clipboard!");
+                    e.stopPropagation(); navigator.clipboard.writeText(copyBtn.dataset.url); UI.showSuccess("Link copied to clipboard!");
                 });
             });
 

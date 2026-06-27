@@ -8,17 +8,20 @@ const UI = {
         viewsObject[viewName].classList.remove('hidden');
     },
 
-    showError: (message) => {
+    _showToast: (message, type) => {
         const container = document.getElementById('toastContainer');
         const toast = document.createElement('div');
-        toast.className = 'toast';
+        toast.className = `toast${type === 'success' ? ' success' : ''}`;
         toast.innerText = message;
         container.appendChild(toast);
-        
+
         setTimeout(() => toast.classList.add('show'), 10);
-        setTimeout(() => { 
-            toast.classList.remove('show'); 
-            setTimeout(() => toast.remove(), 300); 
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
         }, 5000);
-    }
+    },
+
+    showError: (message) => UI._showToast(message, 'error'),
+    showSuccess: (message) => UI._showToast(message, 'success')
 };

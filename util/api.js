@@ -73,6 +73,58 @@ const apiUtils = {
         } catch (error) { return { success: false, error: "Failed to parse versions from APIs." }; }
     },
 
+    getLoaderVersions: async ({ gameVersion, loader } = {}) => {
+        if (!loader || (loader !== 'fabric' && loader !== 'neoforge')) return { success: false, versions: [] };
+        
+        try {
+            const oneHourInMs = 60 * 60 * 1000;
+            const cache = await storage.getLoaderVersionsCache();
+
+            const cacheKey = `loader_versions_${loader}_${gameVersion || 'all'}`;
+            if (cache[cacheKey] && (Date.now() - cache[cacheKey].timestamp < oneHourInMs)) {
+                return { success: true, versions: cache[cacheKey].data };
+            }
+
+            const fetchXml = (url) => axios.get(url, { responseType: 'text', headers: { 'Accept': 'application/xml, text/xml, */*' } });
+
+            const parseVersionsFromXml = (xml) => {
+                const str = typeof xml === 'string' ? xml : String(xml);
+                const matches = str.match(/<version>([^<]+)<\/version>/g) || [];
+                return matches.map(m => m.replace(/<\/?version>/g, '').trim());
+            };
+
+            let versions = [];
+
+            if (loader === 'fabric') {
+                const res = await fetchXml('https://maven.fabricmc.net/net/fabricmc/fabric-loader/maven-metadata.xml');
+                const all = parseVersionsFromXml(res.data);
+                versions = all.filter(v => !v.includes('+build.')).reverse();
+            } else if (loader === 'neoforge') {
+                const res = await fetchXml('https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml');
+                const all = parseVersionsFromXml(res.data);
+                
+                let nfPrefix = '';
+                if (gameVersion) {
+                    const mcParts = gameVersion.split('.');
+                    const major = parseInt(mcParts[1] || '0');
+                    if (major >= 20) {
+                        const minor = mcParts[2] || '0';
+                        nfPrefix = `${major}.${minor}.`;
+                    }
+                }
+                versions = all.filter(v => (!nfPrefix || v.startsWith(nfPrefix)) && !v.includes('beta') && !v.includes('alpha')).reverse();
+            }
+
+            cache[cacheKey] = { timestamp: Date.now(), data: versions };
+            await storage.saveLoaderVersionsCache(cache);
+
+            return { success: true, versions };
+        } catch (error) {
+            console.error('[getLoaderVersions] error:', error.message);
+            return { success: false, error: error.message, versions: [] };
+        }
+    },
+
     searchMods: async ({ query, version, loader, page, platform }) => {
         try {
             const limit = 10;
@@ -203,7 +255,7 @@ const apiUtils = {
 
     checkModUpdates: async ({ mods, version, loader }, onProgress) => {
         const updates = {};
-        let cfLoaderId = loader.toLowerCase() === 'fabric' ? 4 : (loader.toLowerCase() === 'neoforge' ? 6 : 1);
+        const cfLoaderId = loader.toLowerCase() === 'fabric' ? 4 : 6;
 
         const cfIds = mods.map(m => m.ids.curseforge).filter(Boolean);
         let cfBulkData = [];

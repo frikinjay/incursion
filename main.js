@@ -3,7 +3,6 @@ const path = require('path');
 const storage = require('./util/storage');
 const apiUtils = require('./util/api');
 
-// Initialize API configuration
 apiUtils.updateApiHeaders();
 
 function createWindow() {
@@ -24,12 +23,10 @@ function createWindow() {
 
 app.whenReady().then(createWindow);
 
-// --- WINDOW CONTROLS ---
 ipcMain.on('window-min', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.minimize(); });
 ipcMain.on('window-max', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) { w.isMaximized() ? w.unmaximize() : w.maximize(); }});
 ipcMain.on('window-close', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 
-// --- FILE SYSTEM ROUTES ---
 ipcMain.handle('select-directory', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
     return result.canceled ? null : result.filePaths[0];
@@ -40,18 +37,24 @@ ipcMain.handle('save-global-packs', async (event, packs) => await storage.saveGl
 ipcMain.handle('save-pack-metadata', async (event, { packPath, metadata }) => await storage.savePackMetadata(packPath, metadata));
 ipcMain.handle('load-pack-metadata', async (event, packPath) => await storage.loadPackMetadata(packPath));
 ipcMain.handle('remove-mod-files', async (event, { packPath, files }) => await storage.removeModFiles(packPath, files));
-ipcMain.handle('clear-api-cache', async () => await apiUtils.clearCache());
+ipcMain.handle('clear-api-cache', async () => await storage.clearApiCache());
 ipcMain.handle('download-mod', async (event, { mod, packPath }) => await storage.downloadModFiles(mod, packPath));
 
 // --- EXPORT ROUTES ---
 ipcMain.handle('export-pack-cf', async (event, { metadata, exportDir }) => {
-    try { return await storage.exportCurseForgePack(metadata, exportDir); } 
-    catch (err) { return { success: false, error: err.message }; }
+    try { 
+        return await storage.exportCurseForgePack(metadata, exportDir, (percent) => {
+            event.sender.send('export-progress', percent);
+        }); 
+    } catch (err) { return { success: false, error: err.message }; }
 });
 
 ipcMain.handle('export-pack-mr', async (event, { metadata, exportDir }) => {
-    try { return await storage.exportModrinthPack(metadata, exportDir); } 
-    catch (err) { return { success: false, error: err.message }; }
+    try { 
+        return await storage.exportModrinthPack(metadata, exportDir, (percent) => {
+            event.sender.send('export-progress', percent);
+        }); 
+    } catch (err) { return { success: false, error: err.message }; }
 });
 
 // --- API ROUTES ---
@@ -63,6 +66,10 @@ ipcMain.handle('save-api-keys', async (event, keys) => {
 });
 
 ipcMain.handle('get-versions', async () => await apiUtils.getVersions());
+ipcMain.handle('get-loader-versions', async (event, params) => {
+    const result = await apiUtils.getLoaderVersions(params);
+    return result;
+});
 ipcMain.handle('search-mods', async (event, params) => await apiUtils.searchMods(params));
 ipcMain.handle('sync-metadata', async (event, params) => await apiUtils.syncMetadata(params));
 

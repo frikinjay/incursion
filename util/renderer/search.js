@@ -15,7 +15,7 @@ window.SearchManager = {
             const btn = document.getElementById('refreshSearchCacheBtn');
             btn.innerText = 'Clearing...'; btn.disabled = true;
             await window.api.clearApiCache();
-            UI.showError("Cache Cleared! Re-running search...");
+            UI.showSuccess("Cache Cleared! Re-running search...");
             SearchManager.performSearch(); 
             btn.innerText = 'Refresh Cache'; btn.disabled = false;
         });
@@ -141,7 +141,7 @@ window.SearchManager = {
 
             card.querySelectorAll('.copy-link-btn').forEach(copyBtn => {
                 copyBtn.addEventListener('click', (e) => {
-                    e.stopPropagation(); navigator.clipboard.writeText(copyBtn.dataset.url); UI.showError("Link copied to clipboard!");
+                    e.stopPropagation(); navigator.clipboard.writeText(copyBtn.dataset.url); UI.showSuccess("Link copied to clipboard!");
                 });
             });
 

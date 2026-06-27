@@ -1,30 +1,88 @@
 window.HomeManager = {
+    _loaderVersionCache: {},
+
+    _populateLoaderVersions: async (selectedVersion) => {
+        const loaderSelect = document.getElementById('createPackLoaderSelect');
+        const gameVersionSelect = document.getElementById('createPackVersionSelect');
+        const versionSelect = document.getElementById('packLoaderVersionSelect');
+        const loader = loaderSelect.value;
+        const gameVersion = gameVersionSelect.value;
+
+        if (!gameVersion) {
+            versionSelect.innerHTML = '<option value="">Select a Minecraft version first</option>';
+            versionSelect.disabled = true;
+            return;
+        }
+
+        versionSelect.disabled = true;
+        versionSelect.innerHTML = '<option value="">Loading...</option>';
+
+        const cacheKey = `${loader}_${gameVersion}`;
+        if (!HomeManager._loaderVersionCache[cacheKey]) {
+            const res = await window.api.getLoaderVersions({ gameVersion, loader });
+            if (res.success) {
+                HomeManager._loaderVersionCache[cacheKey] = res.versions || [];
+            } else {
+                versionSelect.innerHTML = '<option value="">Failed to load</option>';
+                return;
+            }
+        }
+
+        const versions = HomeManager._loaderVersionCache[cacheKey];
+        versionSelect.innerHTML = '';
+        if (versions.length === 0) {
+            versionSelect.innerHTML = `<option value="">No ${loader} versions for ${gameVersion}</option>`;
+            versionSelect.disabled = true;
+            return;
+        }
+
+        versions.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v; opt.innerText = v;
+            versionSelect.appendChild(opt);
+        });
+
+        if (selectedVersion && versions.includes(selectedVersion)) {
+            versionSelect.value = selectedVersion;
+        }
+
+        versionSelect.disabled = false;
+    },
+
     init: () => {
         document.getElementById('showCreatePackBtn').addEventListener('click', () => { HomeManager.openPackModal(false); });
-        
+
         document.getElementById('browseDirBtn').addEventListener('click', async () => {
             const dir = await window.api.selectDirectory();
             if (dir) document.getElementById('packDirInput').value = dir;
         });
 
         document.getElementById('addModpackBtn').addEventListener('click', async () => {
-            const filePath = await window.api.selectMetadataFile();
-            if (filePath) {
-                const dirPath = filePath.substring(0, filePath.lastIndexOf('\\') !== -1 ? filePath.lastIndexOf('\\') : filePath.lastIndexOf('/'));
-                const res = await window.api.loadPackMetadata(dirPath);
-                
-                if (res) {
-                    const exists = AppState.globalPacks.some(p => p.path === dirPath);
-                    if (!exists) {
-                        AppState.globalPacks.push({ 
-                            name: res.name, path: dirPath, version: res.version || '1.0.0', 
-                            loader: res.loader || 'fabric', gameVersion: res.gameVersion, icon: res.icon
-                        });
-                        await window.api.saveGlobalPacks(AppState.globalPacks);
-                        HomeManager.renderPacksList();
-                    } else { UI.showError("This pack is already in your list."); }
-                } else { UI.showError("Invalid metadata file."); }
-            }
+            const dirPath = await window.api.selectDirectory();
+            if (!dirPath) return;
+
+            const res = await window.api.loadPackMetadata(dirPath);
+            if (res?.success) {
+                const meta = res.metadata;
+                const exists = AppState.globalPacks.some(p => p.path === dirPath);
+                if (!exists) {
+                    AppState.globalPacks.push({
+                        name: meta.name, path: dirPath, version: meta.version || '1.0.0',
+                        loader: meta.loader || 'fabric', gameVersion: meta.gameVersion, icon: meta.icon
+                    });
+                    await window.api.saveGlobalPacks(AppState.globalPacks);
+                    HomeManager.renderPacksList();
+                    UI.showSuccess("Modpack added successfully.");
+                } else { UI.showError("This pack is already in your list."); }
+            } else { UI.showError("No valid pack-metadata.json found in that directory."); }
+        });
+
+        document.getElementById('createPackLoaderSelect').addEventListener('change', () => {
+            HomeManager._populateLoaderVersions(null);
+        });
+
+        document.getElementById('createPackVersionSelect').addEventListener('change', () => {
+            HomeManager._populateLoaderVersions(null);
         });
 
         document.getElementById('selectIconBtn').addEventListener('click', () => {
@@ -48,11 +106,11 @@ window.HomeManager = {
         document.getElementById('confirmCreateBtn').addEventListener('click', async () => { await HomeManager.handleFormSubmit(); });
     },
 
-    openPackModal: (isEdit, pack = null) => {
+    openPackModal: async (isEdit, pack = null) => {
         AppState.isEditing = isEdit;
         const modal = document.getElementById('createPackForm');
         const dirRow = document.getElementById('modalDirRow');
-        
+
         if (isEdit && pack) {
             AppState.editingPackPath = pack.path;
             document.getElementById('modalFormTitle').innerText = 'Edit Modpack Details';
@@ -60,9 +118,10 @@ window.HomeManager = {
             document.getElementById('packVersionInput').value = pack.version || '1.0.0';
             document.getElementById('packAuthorInput').value = pack.author || '';
             document.getElementById('packDescInput').value = pack.description || '';
-            document.getElementById('createPackVersionSelect').value = pack.gameVersion || '1.21.1';
-            document.getElementById('createPackLoaderSelect').value = pack.loader || 'fabric';
-            document.getElementById('packLoaderVersionInput').value = pack.loaderVersion || '';
+            document.getElementById('createPackVersionSelect').value = pack.gameVersion || '';
+            
+            document.getElementById('createPackLoaderSelect').value = (pack.loader === 'neoforge') ? 'neoforge' : 'fabric';
+            
             AppState.chosenIconBase64 = pack.icon || null;
             document.getElementById('packIconPreview').src = pack.icon || 'icon.svg';
             dirRow.style.display = 'none';
@@ -73,13 +132,21 @@ window.HomeManager = {
             document.getElementById('packVersionInput').value = '1.0.0';
             document.getElementById('packAuthorInput').value = '';
             document.getElementById('packDescInput').value = '';
-            document.getElementById('packLoaderVersionInput').value = '';
+            document.getElementById('createPackLoaderSelect').value = 'fabric';
             AppState.chosenIconBase64 = null;
             document.getElementById('packIconPreview').src = 'icon.svg';
             document.getElementById('packDirInput').value = '';
             dirRow.style.display = 'flex';
+
+            const gameVersionSelect = document.getElementById('createPackVersionSelect');
+            if (!gameVersionSelect.value && gameVersionSelect.options.length > 0) {
+                gameVersionSelect.value = gameVersionSelect.options[0].value;
+            }
         }
+
         modal.classList.remove('hidden');
+
+        await HomeManager._populateLoaderVersions(pack?.loaderVersion || null);
     },
 
     handleFormSubmit: async () => {
@@ -89,7 +156,7 @@ window.HomeManager = {
         const description = document.getElementById('packDescInput').value.trim();
         const gameVersion = document.getElementById('createPackVersionSelect').value;
         const loader = document.getElementById('createPackLoaderSelect').value;
-        const loaderVersion = document.getElementById('packLoaderVersionInput').value.trim();
+        const loaderVersion = document.getElementById('packLoaderVersionSelect').value;
 
         if (!name) return UI.showError("Pack name required!");
 
@@ -104,16 +171,11 @@ window.HomeManager = {
                     name, version, author, description, gameVersion, loader, loaderVersion,
                     icon: AppState.chosenIconBase64
                 };
-                
+
                 AppState.globalPacks[packIdx] = { name, path: existingData.path, version, loader, gameVersion, icon: updated.icon };
                 await window.api.saveGlobalPacks(AppState.globalPacks);
                 await window.api.savePackMetadata({ packPath: existingData.path, metadata: updated });
             }
-        
-            document.getElementById('createPackForm').classList.add('hidden');
-            HomeManager.renderPacksList(); // add this
-            return;
-
         } else {
             const packDir = document.getElementById('packDirInput').value;
             if (!packDir) return UI.showError("Directory selection mandatory");
@@ -122,7 +184,7 @@ window.HomeManager = {
                 name, version, author, description, loader, gameVersion, loaderVersion,
                 path: packDir, icon: AppState.chosenIconBase64, mods: []
             };
-            
+
             AppState.globalPacks.push({ name, path: packDir, version, loader, gameVersion, icon: newPack.icon });
             await window.api.saveGlobalPacks(AppState.globalPacks);
             await window.api.savePackMetadata({ packPath: packDir, metadata: newPack });
@@ -130,6 +192,7 @@ window.HomeManager = {
 
         document.getElementById('createPackForm').classList.add('hidden');
         HomeManager.renderPacksList();
+        UI.showSuccess(AppState.isEditing ? "Modpack updated successfully." : "Modpack created successfully.");
     },
 
     renderPacksList: () => {
@@ -176,6 +239,7 @@ window.HomeManager = {
                 AppState.globalPacks = AppState.globalPacks.filter(p => p.path !== pack.path);
                 await window.api.saveGlobalPacks(AppState.globalPacks);
                 HomeManager.renderPacksList();
+                UI.showSuccess("Modpack removed.");
             });
 
             grid.appendChild(card);

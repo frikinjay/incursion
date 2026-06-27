@@ -2,13 +2,14 @@ const fs = require('fs-extra');
 const path = require('path');
 const axios = require('axios');
 const archiver = require('archiver');
-const { app } = require('electron');
 const crypto = require('crypto');
+const { app } = require('electron');
 
 const globalCachePath = path.join(app.getPath('userData'), 'global-packs.json');
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 const versionsCachePath = path.join(app.getPath('userData'), 'versions-cache.json'); 
 const apiCachePath = path.join(app.getPath('userData'), 'api-cache.json');
+const loaderVersionsCachePath = path.join(app.getPath('userData'), 'loader-versions-cache.json');
 
 module.exports = {
     // --- CACHING ---
@@ -18,6 +19,13 @@ module.exports = {
     },
     saveVersionsCache: async (versions) => {
         await fs.outputJson(versionsCachePath, { timestamp: Date.now(), versions }, { spaces: 4 });
+    },
+    getLoaderVersionsCache: async () => {
+        if (await fs.pathExists(loaderVersionsCachePath)) return await fs.readJson(loaderVersionsCachePath);
+        return {};
+    },
+    saveLoaderVersionsCache: async (cache) => {
+        await fs.outputJson(loaderVersionsCachePath, cache, { spaces: 4 });
     },
     getApiCache: async () => {
         if (await fs.pathExists(apiCachePath)) return await fs.readJson(apiCachePath);
@@ -115,19 +123,18 @@ module.exports = {
         const zipName = `${safeName}-${metadata.version || '1.0.0'}.zip`;
         const finalPath = path.join(exportDir, zipName);
     
-        const apiUtils = require('./api'); // already required in main.js but safe to require here
         const settings = await module.exports.getSettings();
         const cfHeaders = { 'x-api-key': settings.curseforge, 'Content-Type': 'application/json', 'Accept': 'application/json' };
-    
         const cfMods = metadata.mods.filter(m => m.ids.curseforge);
     
-        // Fetch any missing cfFileIds live from the CF API
         for (const m of cfMods) {
             if (!m.meta?.cfFileId && m.ids.curseforge) {
                 try {
                     const gameVersion = metadata.gameVersion || '1.21.1';
-                    const loaderMap = { fabric: 4, neoforge: 6, forge: 1, quilt: 5 };
-                    const cfLoaderId = loaderMap[metadata.loader?.toLowerCase()] || 1;
+                    
+                    const loaderMap = { fabric: 4, neoforge: 6 };
+                    const cfLoaderId = loaderMap[metadata.loader?.toLowerCase()] || 4; 
+                    
                     const res = await axios.get(`https://api.curseforge.com/v1/mods/${m.ids.curseforge}`, { headers: cfHeaders });
                     const cfMod = res.data.data;
                     const targetIndex = cfMod.latestFilesIndexes.find(idx => idx.gameVersion === gameVersion && idx.modLoader === cfLoaderId);

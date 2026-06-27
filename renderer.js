@@ -5,6 +5,10 @@ document.getElementById('closeBtn').addEventListener('click', () => window.api.c
 
 // --- GLOBAL NAVIGATION ---
 document.getElementById('backToHomeBtn').addEventListener('click', () => {
+    if (DetailsManager._cleanupUpdateProgress) {
+        DetailsManager._cleanupUpdateProgress();
+        DetailsManager._cleanupUpdateProgress = null;
+    }
     AppState.currentActivePack = null;
     UI.switchView('home', AppViews);
 });
@@ -29,13 +33,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     SearchManager.init();
     SettingsManager.init();
 
+    const versionSelect = document.getElementById('versionSelect');
+    const createVersionSelect = document.getElementById('createPackVersionSelect');
+
     const verRes = await window.api.getVersions();
     if (verRes.success && verRes.versions.length > 0) {
-        const versionSelect = document.getElementById('versionSelect');
-        const createVersionSelect = document.getElementById('createPackVersionSelect');
         versionSelect.innerHTML = '';
         createVersionSelect.innerHTML = '';
-
         verRes.versions.forEach(v => {
             const opt1 = document.createElement('option'); opt1.value = v; opt1.innerText = v;
             versionSelect.appendChild(opt1);
@@ -44,6 +48,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         versionSelect.disabled = false;
         createVersionSelect.disabled = false;
+    } else {
+        versionSelect.innerHTML = '<option value="">Failed to load versions</option>';
+        createVersionSelect.innerHTML = '<option value="">Failed to load versions</option>';
+        UI.showError('Could not load Minecraft versions. Check your internet connection or API keys.');
     }
 
     AppState.globalPacks = await window.api.getGlobalPacks();
