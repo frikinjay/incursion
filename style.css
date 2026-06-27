@@ -286,45 +286,23 @@ button {
 }
 .toast.show { opacity: 1; transform: translateX(0); }
 
-* --- INLINE LINK BUTTONS --- */
+/* --- INLINE LINK BUTTONS --- */
 .project-link-group {
     display: inline-flex;
     align-items: center;
     gap: 4px;
 }
-
-.project-link {
-    color: var(--text-muted);
-    text-decoration: underline;
-    transition: color 0.15s;
-}
-
-.project-link:hover {
-    color: var(--text-main);
-}
-
+.project-link { color: var(--text-muted); text-decoration: underline; transition: color 0.15s; }
+.project-link:hover { color: var(--text-main); }
 .copy-link-btn {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    padding: 4px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-    transition: color 0.15s, background-color 0.15s;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    background: transparent; border: none; color: var(--text-muted); padding: 4px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; border-radius: 4px;
+    transition: color 0.15s, background-color 0.15s; backdrop-filter: none; -webkit-backdrop-filter: none;
 }
-
-.copy-link-btn:hover {
-    color: var(--text-main);
-    background-color: var(--bg-glass-light);
-}
+.copy-link-btn:hover { color: var(--text-main); background-color: var(--bg-glass-light); }
 
 /* --- PROGRESS BAR --- */
-#redownloadProgressContainer {
+#actionProgressContainer {
     display: none;
     width: 100%;
     background-color: var(--bg-glass-heavy);
@@ -334,10 +312,27 @@ button {
     overflow: hidden;
 }
 
-#redownloadProgressBar {
+#actionProgressBar {
     height: 100%;
     width: 0%;
     background-color: var(--accent-primary);
     transition: width 0.3s ease;
     box-shadow: 0 0 10px var(--accent-primary);
 }
+
+/* --- ENVIRONMENT BADGES --- */
+.env-badge {
+    display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; font-weight: 600;
+    background: var(--bg-glass-light); border: 1px solid var(--border-color);
+}
+.env-badge.supported { color: var(--accent-success); border-color: rgba(16, 185, 129, 0.3); }
+.env-badge.unsupported { color: var(--accent-danger); border-color: rgba(239, 68, 68, 0.3); }
+
+/* --- PLATFORM BADGES --- */
+.platform-badge {
+    display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; font-weight: bold;
+    background: var(--bg-app); border: 1px solid var(--border-color);
+}
+.platform-badge.mr { color: #1BD96A; border-color: rgba(27, 217, 106, 0.3); } /* Modrinth Green */
+.platform-badge.cf { color: #F16436; border-color: rgba(241, 100, 54, 0.3); } /* CurseForge Orange */
+.platform-badge.both { color: var(--text-main); }

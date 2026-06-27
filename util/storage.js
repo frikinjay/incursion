@@ -5,39 +5,21 @@ const { app } = require('electron');
 
 const globalCachePath = path.join(app.getPath('userData'), 'global-packs.json');
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
-const versionsCachePath = path.join(app.getPath('userData'), 'versions-cache.json'); // <-- NEW
+const versionsCachePath = path.join(app.getPath('userData'), 'versions-cache.json'); 
 const apiCachePath = path.join(app.getPath('userData'), 'api-cache.json');
 
 module.exports = {
-    // --- CACHING ---
-    getVersionsCache: async () => {
-        if (await fs.pathExists(versionsCachePath)) return await fs.readJson(versionsCachePath);
-        return null;
-    },
-
-    saveVersionsCache: async (versions) => {
-        await fs.outputJson(versionsCachePath, { timestamp: Date.now(), versions }, { spaces: 4 });
-    },
-
-    // --- PACK MANAGEMENT ---
-    getGlobalPacks: async () => {
-        if (await fs.pathExists(globalCachePath)) return await fs.readJson(globalCachePath);
-        return [];
-    },
-
-    saveGlobalPacks: async (packs) => {
-        await fs.outputJson(globalCachePath, packs, { spaces: 4 });
-        return { success: true };
-    },
-
+    getVersionsCache: async () => { if (await fs.pathExists(versionsCachePath)) return await fs.readJson(versionsCachePath); return null; },
+    saveVersionsCache: async (versions) => { await fs.outputJson(versionsCachePath, { timestamp: Date.now(), versions }, { spaces: 4 }); },
+    getGlobalPacks: async () => { if (await fs.pathExists(globalCachePath)) return await fs.readJson(globalCachePath); return []; },
+    saveGlobalPacks: async (packs) => { await fs.outputJson(globalCachePath, packs, { spaces: 4 }); return { success: true }; },
+    
     savePackMetadata: async (packPath, metadata) => {
         try {
             const metaFilePath = path.join(packPath, 'pack-metadata.json');
             await fs.outputJson(metaFilePath, metadata, { spaces: 4 });
             return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
+        } catch (error) { return { success: false, error: error.message }; }
     },
 
     loadPackMetadata: async (packPath) => {
@@ -48,34 +30,27 @@ module.exports = {
                 return { success: true, metadata: data };
             }
             return { success: false, error: "Metadata file not found." };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
+        } catch (error) { return { success: false, error: error.message }; }
     },
 
     removeModFiles: async (packPath, files) => {
         try {
             if (!files) return { success: false, error: "No files specified" };
-            const cfPath = path.join(packPath, 'curseforge', 'mods', files.curseforge);
-            const mrPath = path.join(packPath, 'modrinth', 'mods', files.modrinth);
-
-            if (await fs.pathExists(cfPath)) await fs.remove(cfPath);
-            if (await fs.pathExists(mrPath)) await fs.remove(mrPath);
+            if (files.curseforge) {
+                const cfPath = path.join(packPath, 'curseforge', 'mods', files.curseforge);
+                if (await fs.pathExists(cfPath)) await fs.remove(cfPath);
+            }
+            if (files.modrinth) {
+                const mrPath = path.join(packPath, 'modrinth', 'mods', files.modrinth);
+                if (await fs.pathExists(mrPath)) await fs.remove(mrPath);
+            }
             return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
+        } catch (error) { return { success: false, error: error.message }; }
     },
 
-    // --- DOWNLOADING ---
     downloadModFiles: async (mod, packPath) => {
-        const cfTargetDir = packPath 
-            ? path.join(packPath, 'curseforge', 'mods') 
-            : path.join(app.getPath('userData'), 'global_mods', 'curseforge');
-            
-        const mrTargetDir = packPath 
-            ? path.join(packPath, 'modrinth', 'mods') 
-            : path.join(app.getPath('userData'), 'global_mods', 'modrinth');
+        const cfTargetDir = packPath ? path.join(packPath, 'curseforge', 'mods') : path.join(app.getPath('userData'), 'global_mods', 'curseforge');
+        const mrTargetDir = packPath ? path.join(packPath, 'modrinth', 'mods') : path.join(app.getPath('userData'), 'global_mods', 'modrinth');
         
         await fs.ensureDir(cfTargetDir);
         await fs.ensureDir(mrTargetDir);
@@ -91,37 +66,15 @@ module.exports = {
         };
 
         try {
-            await downloadFile(mod.fileLinks.curseforge, path.join(cfTargetDir, mod.installedFiles.curseforge));
-            await downloadFile(mod.fileLinks.modrinth, path.join(mrTargetDir, mod.installedFiles.modrinth));
+            if (mod.fileLinks.curseforge) await downloadFile(mod.fileLinks.curseforge, path.join(cfTargetDir, mod.installedFiles.curseforge));
+            if (mod.fileLinks.modrinth) await downloadFile(mod.fileLinks.modrinth, path.join(mrTargetDir, mod.installedFiles.modrinth));
             return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
+        } catch (error) { return { success: false, error: error.message }; }
     },
 
-    // --- SETTINGS ---
-    getSettings: async () => {
-        if (await fs.pathExists(settingsPath)) return await fs.readJson(settingsPath);
-        return {};
-    },
-
-    saveSettings: async (keys) => {
-        await fs.outputJson(settingsPath, keys, { spaces: 4 });
-        return { success: true };
-    },
-
-    // --- API CACHING ---
-    getApiCache: async () => {
-        if (await fs.pathExists(apiCachePath)) return await fs.readJson(apiCachePath);
-        return {};
-    },
-
-    saveApiCache: async (cacheData) => {
-        await fs.outputJson(apiCachePath, cacheData, { spaces: 4 });
-    },
-
-    clearApiCache: async () => {
-        if (await fs.pathExists(apiCachePath)) await fs.remove(apiCachePath);
-        return { success: true };
-    }
+    getSettings: async () => { if (await fs.pathExists(settingsPath)) return await fs.readJson(settingsPath); return {}; },
+    saveSettings: async (keys) => { await fs.outputJson(settingsPath, keys, { spaces: 4 }); return { success: true }; },
+    getApiCache: async () => { if (await fs.pathExists(apiCachePath)) return await fs.readJson(apiCachePath); return {}; },
+    saveApiCache: async (cacheData) => { await fs.outputJson(apiCachePath, cacheData, { spaces: 4 }); },
+    clearApiCache: async () => { if (await fs.pathExists(apiCachePath)) await fs.remove(apiCachePath); return { success: true }; }
 };

@@ -1,6 +1,5 @@
 window.HomeManager = {
     init: () => {
-        // Modal Controls
         document.getElementById('showCreatePackBtn').addEventListener('click', () => {
             document.getElementById('createPackForm').classList.remove('hidden');
         });
@@ -48,7 +47,6 @@ window.HomeManager = {
             }
         });
 
-        // Add Existing Pack
         document.getElementById('addModpackBtn').addEventListener('click', async () => {
             const filePath = await window.api.selectMetadataFile();
             if (filePath) {

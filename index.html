@@ -35,7 +35,6 @@
                     <button id="showApiKeysBtn" class="secondary-btn">API Keys</button>
                 </div>
             </div>
-            
             <div id="packsList" class="packs-grid"></div>
         </div>
 
@@ -44,11 +43,13 @@
                 <button class="back-btn" id="backToHomeBtn">← Back</button>
                 <h2 id="detailPackName">Pack Name</h2>
             </div>
-            <div class="details-sub">
-                <p id="detailPackPath"></p>
-                <button id="addModsToPackBtn" class="primary-btn">+ Add Mods</button>
+            <div class="details-sub" style="display: flex; gap: 10px; align-items: center; margin-bottom: 20px;">
+                <p id="detailPackPath" style="flex: 1; margin: 0;"></p>
+                <button id="addModsToPackBtn" class="primary-btn">+ Add Mods (Both)</button>
+                <button id="addModsMrBtn" class="secondary-btn" style="color: #1BD96A; border-color: rgba(27, 217, 106, 0.3);">+ Add MR</button>
+                <button id="addModsCfBtn" class="secondary-btn" style="color: #F16436; border-color: rgba(241, 100, 54, 0.3);">+ Add CF</button>
             </div>
-            <div class="divider"></div>
+            <div class="divider" style="border-bottom: 1px solid var(--border-color); margin-bottom: 24px;"></div>
             
             <div class="pack-controls-bar">
                 <div class="sort-group">
@@ -68,8 +69,24 @@
                 </div>
             </div>
             
-            <div id="redownloadProgressContainer">
-                <div id="redownloadProgressBar"></div>
+            <div class="installed-filters-bar" style="display: flex; gap: 12px; margin-bottom: 24px;">
+                <input type="text" id="installedSearchInput" placeholder="Search installed mods..." style="flex: 1;">
+                <select id="installedEnvSelect">
+                    <option value="all">All Environments</option>
+                    <option value="client">Client-side Only</option>
+                    <option value="server">Server-side Only</option>
+                    <option value="both">Both Envs</option>
+                </select>
+                <select id="installedPlatformSelect">
+                    <option value="all">All Platforms</option>
+                    <option value="both">Both Platforms Only</option>
+                    <option value="modrinth">Modrinth Only</option>
+                    <option value="curseforge">CurseForge Only</option>
+                </select>
+            </div>
+
+            <div id="actionProgressContainer">
+                <div id="actionProgressBar"></div>
             </div>
             
             <div id="packModsList" class="installed-mods-list"></div>
@@ -78,7 +95,7 @@
         <div id="searchView" class="view-panel hidden">
             <div class="view-header">
                 <button class="back-btn" id="backFromSearchBtn">← Back</button>
-                <h2>Search Mods</h2>
+                <h2 id="searchTitle">Search Mods</h2>
             </div>
             
             <div class="controls">
@@ -108,7 +125,6 @@
                 <p style="color: var(--text-muted); margin-top: 0; margin-bottom: 20px;">
                     Enter your API keys below. These will override any keys found in your local .env file.
                 </p>
-                
                 <div style="display: flex; flex-direction: column; gap: 15px;">
                     <div>
                         <label style="display: block; margin-bottom: 5px; font-weight: bold;">CurseForge Core API Key</label>
@@ -118,29 +134,20 @@
                         <label style="display: block; margin-bottom: 5px; font-weight: bold;">Modrinth API Key</label>
                         <input type="password" id="mrKeyInput" style="width: 100%; box-sizing: border-box;" placeholder="mpo_...">
                     </div>
-                    
                     <button id="saveApiKeysBtn" class="success-btn" style="margin-top: 10px; width: fit-content;">Save API Keys</button>
                 </div>
             </div>
         </div>
-
     </div>
 
     <div id="createPackForm" class="modal-panel hidden">
         <div class="modal-content">
             <h3>Create New Modpack</h3>
             <input type="text" id="packNameInput" placeholder="Pack Name">
-            
             <div class="dir-picker-row">
-                <select id="createPackVersionSelect" disabled style="flex: 1;">
-                    <option value="">Loading versions...</option>
-                </select>
-                <select id="createPackLoaderSelect" style="flex: 1;">
-                    <option value="fabric">Fabric</option>
-                    <option value="neoforge">NeoForge</option>
-                </select>
+                <select id="createPackVersionSelect" disabled style="flex: 1;"><option value="">Loading versions...</option></select>
+                <select id="createPackLoaderSelect" style="flex: 1;"><option value="fabric">Fabric</option><option value="neoforge">NeoForge</option></select>
             </div>
-
             <div class="dir-picker-row">
                 <input type="text" id="packDirInput" placeholder="Select Directory..." readonly>
                 <button id="browseDirBtn">Browse</button>
@@ -153,15 +160,12 @@
     </div>
 
     <div id="toastContainer"></div>
-    
     <script src="util/ui.js"></script>
-    
     <script src="util/renderer/state.js"></script>
     <script src="util/renderer/home.js"></script>
     <script src="util/renderer/details.js"></script>
     <script src="util/renderer/search.js"></script>
     <script src="util/renderer/settings.js"></script>
-    
     <script src="renderer.js"></script>
 </body>
 </html>

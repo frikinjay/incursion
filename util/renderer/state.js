@@ -1,17 +1,21 @@
-// Global Application State
 window.AppState = {
     globalPacks: [],
     currentActivePack: null,
     pendingUpdates: {},
     currentSortMode: 'name-asc',
+    
+    installedSearchQuery: "",
+    installedEnvFilter: "all",
+    installedPlatformFilter: "all",
+    
     search: { 
         query: "", 
         page: 1, 
-        totalPages: 1 
+        totalPages: 1,
+        platform: "both"
     }
 };
 
-// Global DOM Views Cache
 window.AppViews = {
     home: document.getElementById('homeView'),
     details: document.getElementById('packDetailsScreen'),

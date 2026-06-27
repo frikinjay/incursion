@@ -16,7 +16,7 @@ permissions:
 # This determines the Release Tag (e.g., v1.0.1)
 # ==========================================
 env:
-  RELEASE_VERSION: "v1.0.4"
+  RELEASE_VERSION: "v1.0.5"
 
 jobs:
   build:

@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('api', {
     loadPackMetadata: (packPath) => ipcRenderer.invoke('load-pack-metadata', packPath),
     removeModFiles: (data) => ipcRenderer.invoke('remove-mod-files', data),
     onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (event, data) => callback(data)),
+    onUpdateProgress: (callback) => ipcRenderer.on('update-progress', (event, percent) => callback(percent)),
     minimizeWindow: () => ipcRenderer.send('window-min'),
     maximizeWindow: () => ipcRenderer.send('window-max'),
     closeWindow: () => ipcRenderer.send('window-close'),
