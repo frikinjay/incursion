@@ -17,13 +17,17 @@ const normalizeName = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 async function fetchWithCache(cacheKey, requestFn) {
     if (!apiMemoryCache) apiMemoryCache = await storage.getApiCache();
     const oneDayInMs = 24 * 60 * 60 * 1000;
+    
     if (apiMemoryCache[cacheKey] && (Date.now() - apiMemoryCache[cacheKey].timestamp < oneDayInMs)) {
         return apiMemoryCache[cacheKey].data;
     }
+    
     const data = await requestFn();
     apiMemoryCache[cacheKey] = { timestamp: Date.now(), data: data };
+    
     if (saveCacheTimeout) clearTimeout(saveCacheTimeout);
     saveCacheTimeout = setTimeout(async () => { await storage.saveApiCache(apiMemoryCache); }, 1500); 
+    
     return data;
 }
 
@@ -50,8 +54,10 @@ const apiUtils = {
                 const mrVersions = mrRes.data.filter(v => v.version_type === 'release').map(v => v.version);
                 const cfRes = await axios.get(`${CF_API}/minecraft/version`, { headers: CF_HEADERS });
                 const cfVersions = cfRes.data.data.map(v => v.versionString);
+                
                 let finalVersions = mrVersions.filter(v => cfVersions.includes(v));
                 if (finalVersions.length === 0) finalVersions = mrVersions;
+                
                 finalVersions.sort((a, b) => {
                     const partsA = a.split('.').map(Number);
                     const partsB = b.split('.').map(Number);
@@ -78,7 +84,6 @@ const apiUtils = {
             }
 
             const cfLoaderId = loader === 'fabric' ? 4 : 6;
-            
             const mrFacets = `[["versions:${version}"],["categories:${loader}"],["project_type:mod"]]`;
             
             let cfData = [], mrData = [];
@@ -88,15 +93,7 @@ const apiUtils = {
                 cfData = await fetchWithCache(cacheKeyCF, async () => {
                     const res = await axios.get(`${CF_API}/mods/search`, { 
                         headers: CF_HEADERS, 
-                        params: { 
-                            gameId: 432, 
-                            classId: 6,
-                            searchFilter: query, 
-                            gameVersion: version, 
-                            modLoaderType: cfLoaderId, 
-                            sortOrder: 'desc', 
-                            pageSize: 50 
-                        } 
+                        params: { gameId: 432, classId: 6, searchFilter: query, gameVersion: version, modLoaderType: cfLoaderId, sortOrder: 'desc', pageSize: 50 } 
                     });
                     return res.data.data;
                 });
@@ -125,8 +122,7 @@ const apiUtils = {
 
             const versionPromises = matchedPairs.map(async ({ cfMod, mrMatch }) => {
                 try {
-                    let mrVersionData = null;
-                    let cfLatestFile = null;
+                    let mrVersionData = null, cfLatestFile = null;
 
                     if (mrMatch) {
                         const mrVerKey = `mr_ver_${mrMatch.project_id}_${version}_${loader}`;
@@ -188,7 +184,8 @@ const apiUtils = {
                             fileLinks: { 
                                 curseforge: cfLatestFile ? cfLatestFile.downloadUrl : null, 
                                 modrinth: mrVersionData ? mrVersionData.files[0].url : null 
-                            }
+                            },
+                            meta: { cfFileId: cfLatestFile ? cfLatestFile.id : null }
                         };
                     }
                 } catch (err) { return null; }
@@ -199,7 +196,6 @@ const apiUtils = {
             const intersections = resolvedIntersections.filter(mod => mod !== null);
 
             searchSessionCache = { query, version, loader, platform, results: intersections };
-
             const paginated = intersections.slice(startIndex, startIndex + limit);
             return { mods: paginated, totalPages: Math.ceil(intersections.length / limit) };
         } catch (error) { return { mods: [], totalPages: 0, error: error.message }; }
@@ -214,11 +210,16 @@ const apiUtils = {
 
         try {
             if (cfIds.length > 0) {
-                const cacheKeyCFBulk = `update_cf_bulk_${cfIds.join('_')}`;
-                cfBulkData = await fetchWithCache(cacheKeyCFBulk, async () => {
-                    const res = await axios.post(`${CF_API}/mods`, { modIds: cfIds }, { headers: CF_HEADERS });
-                    return res.data.data;
-                });
+                const chunkSize = 50;
+                for (let i = 0; i < cfIds.length; i += chunkSize) {
+                    const chunk = cfIds.slice(i, i + chunkSize);
+                    const cacheKeyCFBulk = `update_cf_bulk_${chunk.join('_')}`;
+                    const chunkData = await fetchWithCache(cacheKeyCFBulk, async () => {
+                        const res = await axios.post(`${CF_API}/mods`, { modIds: chunk }, { headers: CF_HEADERS });
+                        return res.data.data;
+                    });
+                    cfBulkData = cfBulkData.concat(chunkData);
+                }
             }
 
             for (let i = 0; i < mods.length; i++) {
@@ -273,7 +274,8 @@ const apiUtils = {
                         fileLinks: { 
                             curseforge: cfFile ? cfFile.downloadUrl : null, 
                             modrinth: mrFile ? mrFile.files[0].url : null 
-                        }
+                        },
+                        meta: { cfFileId: cfFile ? cfFile.id : null }
                     };
                 }
 
@@ -290,11 +292,16 @@ const apiUtils = {
             let cfBulkData = [];
             
             if (cfIds.length > 0) {
-                const cacheKeyCFBulk = `sync_cf_bulk_${cfIds.join('_')}`;
-                cfBulkData = await fetchWithCache(cacheKeyCFBulk, async () => {
-                    const res = await axios.post(`${CF_API}/mods`, { modIds: cfIds }, { headers: CF_HEADERS });
-                    return res.data.data;
-                });
+                const chunkSize = 50;
+                for (let i = 0; i < cfIds.length; i += chunkSize) {
+                    const chunk = cfIds.slice(i, i + chunkSize);
+                    const cacheKeyCFBulk = `sync_cf_bulk_${chunk.join('_')}`;
+                    const chunkData = await fetchWithCache(cacheKeyCFBulk, async () => {
+                        const res = await axios.post(`${CF_API}/mods`, { modIds: chunk }, { headers: CF_HEADERS });
+                        return res.data.data;
+                    });
+                    cfBulkData = cfBulkData.concat(chunkData);
+                }
             }
 
             const updatedMods = [];

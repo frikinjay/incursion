@@ -1,22 +1,19 @@
 name: Build and Release Incursion
 
-# Trigger the workflow automatically when you push to the 'main' branch
 on:
   push:
     branches:
       - main
   workflow_dispatch: 
 
-# Ensure the GitHub Action has permission to create a release
 permissions:
   contents: write
 
 # ==========================================
-# CHANGE THIS VARIABLE BEFORE YOU PUSH!
-# This determines the Release Tag (e.g., v1.0.1)
+# CHANGE THIS VARIABLE BEFORE PUSH!
 # ==========================================
 env:
-  RELEASE_VERSION: "v1.0.5"
+  RELEASE_VERSION: "v1.0.6"
 
 jobs:
   build:
@@ -42,8 +39,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # This grabs the finished files from the dist/ folder and uploads them 
-      # directly to the GitHub Releases page under the tag you specified above.
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:

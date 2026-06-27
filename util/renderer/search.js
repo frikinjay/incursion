@@ -31,7 +31,7 @@ window.SearchManager = {
             version: document.getElementById('versionSelect').value, 
             loader: document.getElementById('loaderSelect').value, 
             page: AppState.search.page,
-            platform: AppState.search.platform
+            platform: AppState.search.platform 
         };
         
         const response = await window.api.searchMods(params);
@@ -62,6 +62,7 @@ window.SearchManager = {
             const hasCF = !!mod.ids.curseforge;
             const hasMR = !!mod.ids.modrinth;
             const title = (hasCF ? mod.names.curseforge : mod.names.modrinth) || "Unknown Mod";
+            const uniqueId = mod.ids.curseforge || mod.ids.modrinth;
             
             let badgesHtml = '';
             if (hasCF && hasMR) badgesHtml = '<span class="platform-badge both">Both</span>';
@@ -71,8 +72,8 @@ window.SearchManager = {
             card.innerHTML = `
                 <div class="mod-header" style="display: flex; gap: 15px; align-items: flex-start; margin-bottom: 15px;">
                     <div class="mod-icons" style="display: flex; flex-direction: column; gap: 8px;">
-                        ${hasCF && mod.icons.curseforge ? `<img src="${mod.icons.curseforge}" class="mod-icon" style="width: 48px; height: 48px; border-radius: 8px;">` : ''}
-                        ${hasMR && mod.icons.modrinth ? `<img src="${mod.icons.modrinth}" class="mod-icon" style="width: 48px; height: 48px; border-radius: 8px;">` : ''}
+                        ${hasCF && mod.icons.curseforge ? `<img src="${mod.icons.curseforge}" class="mod-icon" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover;">` : ''}
+                        ${hasMR && mod.icons.modrinth ? `<img src="${mod.icons.modrinth}" class="mod-icon" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover;">` : ''}
                     </div>
                     <div class="mod-info" style="flex: 1;">
                         <h3 style="margin: 0 0 5px 0; display: flex; align-items: center; gap: 10px;">
@@ -114,7 +115,6 @@ window.SearchManager = {
             btn.className = 'download-btn';
             btn.innerText = 'Download';
 
-            const uniqueId = mod.ids.curseforge || mod.ids.modrinth;
             const inPack = AppState.currentActivePack && AppState.currentActivePack.mods.some(m => (m.ids.curseforge === uniqueId) || (m.ids.modrinth === uniqueId));
             
             if (inPack) { btn.classList.add('in-pack'); btn.innerText = 'Added to Pack'; }
@@ -129,7 +129,7 @@ window.SearchManager = {
                             AppState.currentActivePack.mods.push({
                                 ids: mod.ids, names: mod.names, authors: mod.authors, environments: mod.environments, 
                                 installedFiles: mod.installedFiles, links: mod.links, icons: mod.icons, fileLinks: mod.fileLinks,
-                                summary: mod.summary, dateAdded: Date.now()
+                                meta: mod.meta, summary: mod.summary, dateAdded: Date.now()
                             });
                             await window.api.savePackMetadata({ packPath: AppState.currentActivePack.path, metadata: AppState.currentActivePack });
                         }

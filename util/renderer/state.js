@@ -4,10 +4,17 @@ window.AppState = {
     pendingUpdates: {},
     currentSortMode: 'name-asc',
     
+    // Modal
+    isEditing: false,
+    editingPackPath: null,
+    chosenIconBase64: null,
+    
+    // Filter
     installedSearchQuery: "",
     installedEnvFilter: "all",
     installedPlatformFilter: "all",
     
+    // Search
     search: { 
         query: "", 
         page: 1, 
