@@ -1,11 +1,54 @@
-<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080">
-	<style>
-		.s0 { fill: #303947;stroke: #000000;stroke-miterlimit:10 } 
-		.s1 { fill: #ffffff } 
-	</style>
-	<g id="Folder 1">
-		<path id="Shape 1" fill-rule="evenodd" class="s0" d="m1046 34v1012h-1012v-1012z"/>
-		<path id="I" class="s1" aria-label="I"  d="m669.4 116.6v836.4h-257.4v-579h-90.1v-257.4z"/>
-		<path id="I" class="s1" aria-label="I"  d="m411.6 953.4v-836.4h257.4v579h90.1v257.4z"/>
-	</g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Glass tile: indigo to violet, lit from the top left -->
+    <linearGradient id="tile" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#6d7bff"/>
+      <stop offset="0.55" stop-color="#6a4df4"/>
+      <stop offset="1" stop-color="#3b1fae"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.28" cy="0.2" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="depth" cx="0.75" cy="0.95" r="0.7">
+      <stop offset="0" stop-color="#1b0b5e" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#1b0b5e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.75"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.35"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e3dcff"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.5" cy="0" r="0.62" gradientTransform="translate(0 0) scale(1 0.62)">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="0.7" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="22"/>
+      <feOffset dy="18"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="sq"><rect x="40" y="40" width="944" height="944" rx="226"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#sq)">
+    <rect x="40" y="40" width="944" height="944" fill="url(#tile)"/>
+    <rect x="40" y="40" width="944" height="944" fill="url(#depth)"/>
+    <rect x="40" y="40" width="944" height="944" fill="url(#glow)"/>
+    <!-- glossy upper sheen -->
+    <rect x="40" y="40" width="944" height="944" fill="url(#sheen)"/>
+  </g>
+  <rect x="44" y="44" width="936" height="936" rx="222" fill="none" stroke="url(#rim)" stroke-width="8"/>
+
+  <!-- The original Incursion mark: an I whose top serif reaches left and bottom serif reaches right -->
+  <g filter="url(#shadow)" transform="translate(512 512) scale(0.66) translate(-540.5 -535)">
+    <path fill="url(#mark)" stroke="url(#mark)" stroke-width="30" stroke-linejoin="round" d="M411.6 116.6H669.4V696H759.5V953.4H411.6V374H321.9V116.6Z"/>
+  </g>
 </svg>

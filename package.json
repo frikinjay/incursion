@@ -1,9 +1,13 @@
 {
   "name": "incursion",
-  "version": "1.0.8",
+  "version": "2.6.0",
   "main": "main.js",
+  "incursion": {
+    "cfService": "https://incursion-cf.www-aipt.workers.dev",
+    "linksRepo": "frikinjay/incursion-links",
+    "linksPublicKey": "MCowBQYDK2VwAyEAquPS4CKYj85Bc6hYjVODHrChNIBUrowGd4HxDfmBy6Q="
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "electron .",
     "build": "electron-builder",
     "build:linux": "electron-builder -l",
@@ -18,25 +22,51 @@
       "output": "dist"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "mac": {
       "target": "dmg"
     },
     "linux": {
-      "target": "AppImage",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Game",
+      "maintainer": "Incursion contributors",
+      "synopsis": "Minecraft modpack builder for CurseForge and Modrinth",
       "syncDesktopName": true
-    }
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "style.css",
+      "icon.png",
+      "icon.svg",
+      "assets/**",
+      "renderer/**",
+      "util/**",
+      "package.json"
+    ]
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Build Minecraft modpacks for CurseForge and Modrinth at the same time.",
+  "homepage": "https://github.com/frikinjay/incursion",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frikinjay/incursion.git"
+  },
+  "bugs": {
+    "url": "https://github.com/frikinjay/incursion/issues"
+  },
   "dependencies": {
     "archiver": "^6.0.2",
-    "axios": "^1.18.0",
     "dotenv": "^17.4.2",
+    "eml-lib": "^2.7.4",
     "fs-extra": "^11.3.5"
   },
   "devDependencies": {

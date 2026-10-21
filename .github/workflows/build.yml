@@ -4,15 +4,22 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: 
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+# One run per branch at a time so releases don't race.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
 
@@ -23,22 +30,46 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22' 
-
-      - name: Get version from package.json
-        id: package-version
-        shell: bash
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "APP_VERSION=v$VERSION" >> $GITHUB_ENV
+          node-version: '22'
+          cache: npm
 
       - name: Install Dependencies
-        run: npm install
+        run: npm ci --no-audit --no-fund
 
+      # --publish never: the release job below uploads the files.
       - name: Build Application
-        run: npm run build
+        run: npx electron-builder --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: incursion-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+
+  # Publish once, after every platform has built.
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Get Version
+        run: echo "APP_VERSION=v$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - name: Download Builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
@@ -49,6 +80,7 @@ jobs:
           prerelease: false
           make_latest: true
           files: |
-            dist/*.exe
-            dist/*.dmg
-            dist/*.AppImage
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb

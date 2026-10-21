@@ -1,12 +1,16 @@
 # Dependencies
 node_modules/
 
-# Build outputs
+# Build output
 dist/
 
-# Environment variables (CRITICAL SECURITY)
+# Local environment and secrets
 .env
+.env.*
 
-# OS generated files
+# Editors and operating systems
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
+desktop.ini
