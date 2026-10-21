@@ -1,3 +1,5 @@
+![Incursion](incursion.png)
+
 # Incursion
 
 Build one Minecraft modpack and publish it to **CurseForge and Modrinth at the same time**, then play it.
@@ -64,4 +66,4 @@ npm start              # run from source
 npm run build          # installer for this system, in dist/
 ```
 
-Every push to `main` builds Windows, macOS and Linux versions with GitHub Actions and publishes them as a release.
+Releases are built for Windows, macOS and Linux with GitHub Actions

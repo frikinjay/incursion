@@ -1,22 +1,54 @@
 name: Build and Release Incursion
 
+# Runs only when started from the Actions tab or when a version tag (e.g. v2.6.1) is pushed.
+# Ordinary commits never build or release anything.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
-# One run per branch at a time so releases don't race.
+# One run per ref at a time so releases don't race.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # Skips the build and release when this version is already released.
+  check:
+    name: Check Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      published: ${{ steps.release.outputs.published }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Get Version
+        id: version
+        run: echo "version=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Look for an Existing Release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$VERSION is already released. Bump the version in package.json to publish a new one."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build (${{ matrix.os }})
+    needs: check
+    if: needs.check.outputs.published != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -56,15 +88,9 @@ jobs:
   # Publish once, after every platform has built.
   release:
     name: Publish Release
-    needs: build
+    needs: [check, build]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Get Version
-        run: echo "APP_VERSION=v$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
-
       - name: Download Builds
         uses: actions/download-artifact@v4
         with:
@@ -74,8 +100,8 @@ jobs:
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.APP_VERSION }}
-          name: "Incursion ${{ env.APP_VERSION }}"
+          tag_name: ${{ needs.check.outputs.version }}
+          name: "Incursion ${{ needs.check.outputs.version }}"
           draft: false
           prerelease: false
           make_latest: true
