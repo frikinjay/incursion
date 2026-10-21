@@ -10,7 +10,7 @@
 @font-face { font-family: 'JetBrains Mono'; font-style: normal; font-display: swap; font-weight: 100 800;
     src: url(assets/fonts/jetbrains-mono-latin-wght-normal.woff2) format('woff2-variations'); }
 
-:root {
+:root { 
     color-scheme: light;
     --font-display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
     --font-body: 'Inter', 'Segoe UI Variable Text', system-ui, sans-serif;
