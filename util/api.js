@@ -297,8 +297,7 @@ const api = {
             // The short "latest files" list can miss this version, so ask for its files directly.
             const file = idx ? (await cfFiles([idx.fileId])).get(idx.fileId) : m && await cfLatestFile(m.id, gameVersion, loader, type, { force: true });
             if (!m || !file) return out.errors.push('No compatible CurseForge file');
-            if (!file?.url) return out.errors.push('Author disabled third-party downloads on CurseForge');
-            out.curseforge = { mod: m, file };
+            out.curseforge = { mod: m, file, blocked: !file.url };
         })());
         await Promise.all(tasks.map(t => t.catch(err => out.errors.push(err.message))));
         return out;
@@ -320,6 +319,7 @@ const api = {
             icons: { curseforge: c ? c.mod.icon : null, modrinth: m ? (m.project?.icon || null) : null },
             fileLinks: { curseforge: c ? c.file.url : null, modrinth: m ? m.version.url : null },
             hashes: { curseforge: c ? { sha1: c.file.sha1 } : null, modrinth: m ? { sha1: m.version.sha1, sha512: m.version.sha512 } : null },
+            ...(c?.blocked ? { manual: { curseforge: { from: 'download', expectedFile: c.file.fileName, expectedSha1: c.file.sha1 || null, page: `${c.mod.url}/files/${c.file.id}` } } } : {}),
             sizes: { curseforge: c ? c.file.size : null, modrinth: m ? m.version.size : null },
             deps: { curseforge: c ? c.file.deps : [], modrinth: m ? m.version.deps : [] },
             incompat: { curseforge: c ? c.file.incompat : [], modrinth: m ? m.version.incompat : [] },
@@ -511,6 +511,9 @@ const api = {
         const mrDeps = unique(entries.flatMap(e => e.deps?.modrinth || [])).filter(id => !haveMr.has(id));
         const cfDeps = unique(entries.flatMap(e => e.deps?.curseforge || []).map(Number)).filter(id => !haveCf.has(id));
         if (!mrDeps.length && !cfDeps.length) return [];
+        const askers = (pl, id) => entries.filter(e => (e.deps?.[pl] || []).some(d => String(d) === String(id)))
+            .map(e => ({ key: String(e.ids.curseforge || e.ids.modrinth || e.ids.local), title: e.names?.curseforge || e.names?.modrinth || 'Unknown mod' }));
+        const addAskers = (r, list) => { for (const a of list) if (!r.requiredBy.some(x => x.key === a.key)) r.requiredBy.push(a); };
 
         const [projects, cfm] = await Promise.all([
             mrDeps.length && platform !== 'curseforge' ? mrProjects(mrDeps) : new Map(),
@@ -520,18 +523,19 @@ const api = {
         const ctx = { t: content.typeOf('mod'), l, loader, gameVersion };
         for (const id of cfDeps) {
             const m = cfm.get(id);
-            if (!m || !m.distributable || !cfFitsVersion(m, ctx)) continue;
-            results.set(`slug:${m.slug}`, cfResult(m, ctx, null));
+            if (!m || !cfFitsVersion(m, ctx)) continue;
+            results.set(`slug:${m.slug}`, { ...cfResult(m, ctx, null), requiredBy: askers('curseforge', id) });
         }
         for (const id of mrDeps) {
             const p = projects.get(id);
             if (!p || (p.type && p.type !== 'mod') || !p.loaders.includes(l.mr) || haveMr.has(p.id)) continue;
             const twin = [...results.values()].find(r => r.platforms.curseforge && (r.slug === p.slug || normalizeName(r.title) === normalizeName(p.title)));
             const mrPart = { id: p.id, slug: p.slug, url: `https://modrinth.com/mod/${p.slug}` };
-            if (twin) { twin.platforms.modrinth = mrPart; twin.env ||= p.env; continue; }
+            if (twin) { twin.platforms.modrinth = mrPart; twin.env ||= p.env; addAskers(twin, askers('modrinth', p.id)); continue; }
             results.set(`slug:${p.slug}`, {
                 key: `mr:${p.id}`, title: p.title, slug: p.slug, summary: p.summary, author: null, icon: p.icon,
-                downloads: p.downloads, updated: p.updated, env: p.env, platforms: { curseforge: null, modrinth: mrPart }
+                downloads: p.downloads, updated: p.updated, env: p.env, platforms: { curseforge: null, modrinth: mrPart },
+                requiredBy: askers('modrinth', p.id)
             });
         }
         if (platform === 'both') {
@@ -548,7 +552,7 @@ const api = {
                     const res = await cf(`/mods/search?${qs({ gameId: MC_GAME_ID, classId: CF_CLASS_MODS, slug: r.slug })}`);
                     const m = res.data[0] && slimCfMod(res.data[0]);
                     const idx = m && pickCfIndex(m, gameVersion, l.cf);
-                    if (idx && m.distributable) r.platforms.curseforge = { id: m.id, slug: m.slug, fileId: idx.fileId, fileName: idx.filename, url: m.url };
+                    if (idx) r.platforms.curseforge = { id: m.id, slug: m.slug, fileId: idx.fileId, fileName: idx.filename, url: m.url, ...(m.distributable ? {} : { blocked: true }) };
                 } catch {}
             }
         }
@@ -962,7 +966,7 @@ async function matchTwins(s, ctx, cfList, mrHits) {
         const m = cfFound.get(Number(cfId));
         if (!m || (m.classId && m.classId !== ctx.t.cfClass)) continue;
         if (strong.has(how)) learned.push({ cf: m.id, mr: mrId, how });
-        if (m.distributable && cfFitsVersion(m, ctx)) mrTwin.set(mrId, m);
+        if (cfFitsVersion(m, ctx)) mrTwin.set(mrId, m);
     }
 
     if (learned.length) links.learn(learned);
@@ -977,7 +981,7 @@ function cfResult(m, ctx, twin) {
         icon: m.icon || twin?.icon || null, downloads: m.downloads + (twin?.downloads || 0), updated: m.updated, created: m.created || twin?.created || null,
         env: twin?.env || null,
         platforms: {
-            curseforge: { id: m.id, slug: m.slug, fileId: idx?.fileId || null, fileName: idx?.filename || null, url: m.url },
+            curseforge: { id: m.id, slug: m.slug, fileId: idx?.fileId || null, fileName: idx?.filename || null, url: m.url, ...(m.distributable ? {} : { blocked: true }) },
             modrinth: twin ? { id: twin.id, slug: twin.slug, url: `https://modrinth.com/${t.mrType}/${twin.slug}`, author: twin.author } : null
         }
     };
@@ -1051,7 +1055,7 @@ async function search({ query = '', gameVersion, loader, platform = 'all', sort 
             }
             mods = s.list.slice(offset - CF_CAP, offset - CF_CAP + limit);
         }
-        const shown = mods.filter(m => m.distributable).map(m => cfResult(m, ctx, null));
+        const shown = mods.map(m => cfResult(m, ctx, null));
         return { mods: shown, totalHint: total, found: offset + mods.length, exhausted: offset + limit >= total, hasMore: offset + limit < total };
     }
 
@@ -1089,11 +1093,10 @@ async function search({ query = '', gameVersion, loader, platform = 'all', sort 
                 }
             }
             const mrHits = await mrPromise;
-            const usableCf = cfBatch.filter(m => m.distributable);
-            const { cfTwin, mrTwin } = await matchTwins(s, ctx, usableCf, mrHits);
+            const { cfTwin, mrTwin } = await matchTwins(s, ctx, cfBatch, mrHits);
             const batch = [];
-            for (let i = 0; i < Math.max(usableCf.length, mrHits.length); i++) {
-                if (usableCf[i]) batch.push(cfResult(usableCf[i], ctx, cfTwin.get(usableCf[i].id) || null));
+            for (let i = 0; i < Math.max(cfBatch.length, mrHits.length); i++) {
+                if (cfBatch[i]) batch.push(cfResult(cfBatch[i], ctx, cfTwin.get(cfBatch[i].id) || null));
                 if (mrHits[i]) batch.push(mrResult(mrHits[i], ctx, mrTwin.get(mrHits[i].id) || null));
             }
             const key = SORTS[sort]?.key;
@@ -1141,7 +1144,7 @@ async function cfLatestFile(modId, gameVersion, loader, type = 'mod', { force = 
     return fit.find(f => f.releaseType === 1) || fit[0] || null;
 }
 
-function modKey(m) { return String(m.ids.curseforge || m.ids.modrinth); }
+function modKey(m) { return String(m.ids.curseforge || m.ids.modrinth || m.ids.local); }
 
 api.modKey = modKey;
 api.pickCfIndex = pickCfIndex;

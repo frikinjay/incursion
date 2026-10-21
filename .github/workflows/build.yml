@@ -1,6 +1,6 @@
 name: Build and Release Incursion
 
-# Runs only when started from the Actions tab or when a version tag (e.g. v2.6.1) is pushed.
+# Runs only when started from the Actions tab or when a version tag (e.g. v2.7.0) is pushed.
 # Ordinary commits never build or release anything.
 on:
   workflow_dispatch:
@@ -8,14 +8,16 @@ on:
     tags:
       - 'v*'
 
+# Read-only by default; only the release job can write.
 permissions:
-  contents: write
+  contents: read
 
 # One run per ref at a time so releases don't race.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: false
 
+# Third-party actions are pinned to exact commits (the comment says which release).
 jobs:
   # Skips the build and release when this version is already released.
   check:
@@ -26,7 +28,9 @@ jobs:
       published: ${{ steps.release.outputs.published }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Get Version
         id: version
@@ -57,10 +61,12 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: npm
@@ -68,6 +74,7 @@ jobs:
       - name: Install Dependencies
         run: npm ci --no-audit --no-fund
 
+      # Windows: NSIS installer. macOS: one DMG for Intel and Apple Silicon (ad-hoc signed). Linux: AppImage and .deb.
       # --publish never: the release job below uploads the files.
       - name: Build Application
         run: npx electron-builder --publish never
@@ -75,7 +82,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload Build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: incursion-${{ matrix.os }}
           path: |
@@ -90,18 +97,65 @@ jobs:
     name: Publish Release
     needs: [check, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
+      - name: Checkout Release Notes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: RELEASE_NOTES.md
+          sparse-checkout-cone-mode: false
+
+      # RELEASE_NOTES.md: its "# " heading is the release title, the rest the description. It is only used when the
+      # heading names this version, so notes from an earlier release are never reused by mistake.
+      - name: Prepare Release Notes
+        id: notes
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          title="Incursion $VERSION"
+          : > notes.md
+          if [ -f RELEASE_NOTES.md ]; then
+            heading=$(grep -m1 '^# ' RELEASE_NOTES.md | sed 's/^# //')
+            number="${VERSION#v}"
+            if printf '%s' "$heading" | grep -Eq "(^|[^0-9.])${number//./\.}([^0-9.]|$)"; then
+              title="$heading"
+              awk 'seen { print } /^# / && !seen { seen = 1 }' RELEASE_NOTES.md | sed '/./,$!d' > notes.md
+            else
+              echo "::warning::RELEASE_NOTES.md is for another version (\"$heading\"), so this release has no description."
+            fi
+          fi
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
       - name: Download Builds
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: release
           merge-multiple: true
 
+      - name: Write Checksums
+        working-directory: release
+        run: sha256sum -- *.exe *.dmg *.AppImage *.deb > SHA256SUMS.txt
+
+      # A signed record that these files were built by this workflow from this commit (gh attestation verify).
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+
       - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.check.outputs.version }}
-          name: "Incursion ${{ needs.check.outputs.version }}"
+          name: ${{ steps.notes.outputs.title }}
+          body_path: notes.md
           draft: false
           prerelease: false
           make_latest: true
@@ -110,3 +164,4 @@ jobs:
             release/*.dmg
             release/*.AppImage
             release/*.deb
+            release/SHA256SUMS.txt

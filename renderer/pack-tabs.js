@@ -211,6 +211,7 @@
                     const r = await call('publish:run', { path: snap.meta.path, targets: chosen(), release: release(), serverPack: withServer ? { sidedness: spOptions.mode() } : null, dryRun: true });
                     out.replaceChildren(h('div.section-title', 'Ready to Upload'), ...Object.entries(r).flatMap(([k, v]) => [
                         h('div.cell', h('span.plat', { class: k === 'modrinth' ? 'mr' : 'cf' }, k === 'modrinth' ? 'Modrinth' : 'CurseForge'), h('span.mono.grow', v.file), h('span.faint', fmt.bytes(v.size))),
+                        v.bundled?.length ? h('div.cell.bundled-note', icon('warn'), h('span.grow', `Includes ${fmt.plural(v.bundled.length, 'file')} added by hand: ${v.bundled.join(', ')}. Make sure each mod’s licence allows bundling it.`)) : null,
                         v.serverPack ? h('div.cell', h('span.chip.sm', 'Server Pack'), h('span.mono.grow', v.serverPack.file || v.serverPack.error), v.serverPack.size ? h('span.faint', fmt.bytes(v.serverPack.size)) : null) : null]).filter(Boolean));
                 } catch (err) { out.replaceChildren(h('p.err-text', err.message)); }
                 dryBtn.disabled = false;
@@ -218,7 +219,9 @@
             publishBtn.addEventListener('click', async () => {
                 const list = chosen();
                 if (!list.length) return;
-                const ok = await UI.confirm({ title: `Publish to ${list.map(x => x === 'modrinth' ? 'Modrinth' : 'CurseForge').join(' and ')}?`, message: `Version ${version}${withServer ? ' and its server pack' : ''} become${withServer ? '' : 's'} public on ${list.length === 2 ? 'both sites' : 'that site'}. This can’t be undone from Incursion.`, confirmLabel: 'Publish' });
+                const handAdded = list.flatMap(pl => snap.meta.mods.filter(m => m.manual?.[pl] && m.manual[pl].from !== 'download' && !m.disabled)).length;
+                const bundleNote = handAdded ? ` It includes ${fmt.plural(handAdded, 'file')} added by hand, bundled inside the pack: check their licences allow that, or moderators may reject it.` : '';
+                const ok = await UI.confirm({ title: `Publish to ${list.map(x => x === 'modrinth' ? 'Modrinth' : 'CurseForge').join(' and ')}?`, message: `Version ${version}${withServer ? ' and its server pack' : ''} become${withServer ? '' : 's'} public on ${list.length === 2 ? 'both sites' : 'that site'}. This can’t be undone from Incursion.${bundleNote}`, confirmLabel: 'Publish' });
                 if (!ok) return;
                 publishBtn.disabled = true;
                 try {
@@ -297,7 +300,7 @@
                 h('h3', 'Problems'),
                 h('p', 'Conflicts declared by the platforms or inside the mod files, duplicate mods, missing files, and jars added to the pack folders by hand.'),
                 items.length ? h('div.group', { style: { margin: 0 } }, items.map(i => h('div.issue',
-                    h(`div.ic.${i.severity}`, icon(i.kind === 'conflict' ? 'bug' : i.kind === 'missing' ? 'download' : i.kind === 'untracked' ? 'import' : 'layers')),
+                    h(`div.ic.${i.severity}`, icon(ISSUE_ICON[i.kind] || 'layers')),
                     h('div', { style: { minWidth: 0 } }, h('div.t', i.title), h('div.d', i.detail)),
                     i.kind === 'untracked'
                         ? h('button.btn.tinted.sm', { on: { click: () => JarReview.open(snap) } }, 'Review')
@@ -325,13 +328,16 @@
         return { update(next) { snap = next; renderIssues(); } };
     }
 
+    const ISSUE_ICON = { conflict: 'bug', missing: 'download', untracked: 'import', 'manual-download': 'download', 'manual-missing': 'warn', 'manual-outdated': 'history', manual: 'file' };
+
     const PLAN_TEXT = {
         link: () => 'Both the Modrinth and CurseForge files are present. It will be added to the pack as one mod.',
         copy: (i) => `The same file is on ${i.missing === 'curseforge' ? 'CurseForge' : 'Modrinth'}: it is copied into ${i.missing}/mods.`,
         download: (i) => `${i.missing === 'curseforge' ? 'CurseForge' : 'Modrinth'} has this mod with a different file: its newest build for this pack can be downloaded.`,
         single: (i) => `Only on ${i.missing === 'curseforge' ? 'Modrinth' : 'CurseForge'}. It is added for that platform only.`,
         stray: () => 'This mod is already in the pack. This file is an extra or outdated copy.',
-        unknown: () => 'Neither Modrinth nor CurseForge recognises this file.'
+        manual: (i) => `The pack has this mod, but not for ${i.platform === 'curseforge' ? 'CurseForge' : 'Modrinth'}. This file is added by hand for that edition; exports bundle it inside the pack.`,
+        unknown: () => 'Neither Modrinth nor CurseForge recognises this file. It can be kept as a local mod: both editions use it, and exports bundle it inside the pack.'
     };
     const JarReview = {
         async open(snap) {
@@ -346,7 +352,7 @@
             try { items = await call('packs:untracked', { path: snap.meta.path }); }
             catch (err) { body.replaceChildren(h('p.err-text', err.message)); return; }
             if (!items.length) { body.replaceChildren(h('p.muted', 'Every file in this pack’s mod folders is already part of the pack.')); return; }
-            const picked = new Set(items.filter(i => ['link', 'copy', 'download', 'single'].includes(i.plan)).map(i => i.id));
+            const picked = new Set(items.filter(i => ['link', 'copy', 'download', 'single', 'manual'].includes(i.plan)).map(i => i.id));
             const trash = new Set();
             const mode = Object.fromEntries(items.map(i => [i.id, 'both']));
             const sync = () => {
@@ -356,7 +362,7 @@
                 trashBtn.textContent = `Move ${fmt.plural(trash.size, 'File', 'Files')} to Recycle Bin`;
             };
             const rows = items.map(i => {
-                const adoptable = ['link', 'copy', 'download', 'single'].includes(i.plan);
+                const adoptable = ['link', 'copy', 'download', 'single', 'manual', 'unknown'].includes(i.plan);
                 const set = adoptable ? picked : trash;
                 const extra = (i.plan === 'copy' || i.plan === 'download')
                     ? h('label.review-opt', UI.checkbox(true, (v) => { mode[i.id] = v ? 'both' : 'single'; }), h('span', i.plan === 'copy' ? `Also copy into ${i.missing}/mods` : `Also download the ${i.missing === 'curseforge' ? 'CurseForge' : 'Modrinth'} file`))
@@ -369,7 +375,7 @@
                         h('div.d', PLAN_TEXT[i.plan](i)),
                         h('div.files.mono', i.files.map(f => `${f.platform}/mods/${f.name}`).join('  ·  ')),
                         extra),
-                    h(`span.chip.sm${adoptable ? '.accent' : i.plan === 'stray' ? '.amber' : ''}`, adoptable ? 'Add' : i.plan === 'stray' ? 'Leftover' : 'Unknown'));
+                    h(`span.chip.sm${i.plan === 'stray' ? '.amber' : '.accent'}`, i.plan === 'manual' ? 'By Hand' : i.plan === 'unknown' ? 'Local Mod' : adoptable ? 'Add' : 'Leftover'));
             });
             body.replaceChildren(...rows);
             sync();
@@ -390,6 +396,41 @@
     };
     window.JarReview = JarReview;
 
+    // Version ranges as mods declare them (Maven intervals or Fabric predicates), in words.
+    function rangeText(range) {
+        const one = (p) => {
+            p = p.trim();
+            let m;
+            if ((m = p.match(/^\[([^,\]]+)\]$/))) return `exactly ${m[1]}`;
+            if ((m = p.match(/^([[(])([^,]*),([^\])]*)([\])])$/))) {
+                const [, open, lo, hi, close] = m.map(x => x.trim());
+                const from = lo && (open === '[' ? `${lo} or newer` : `newer than ${lo}`);
+                const to = hi && (close === ']' ? `up to ${hi}` : `below ${hi}`);
+                return [from, to].filter(Boolean).join(', ') || 'any version';
+            }
+            return p.split(/\s+/).map(q => {
+                if ((m = q.match(/^>=\s*(.+)$/))) return `${m[1]} or newer`;
+                if ((m = q.match(/^>(.+)$/))) return `newer than ${m[1]}`;
+                if ((m = q.match(/^<=(.+)$/))) return `up to ${m[1]}`;
+                if ((m = q.match(/^<(.+)$/))) return `below ${m[1]}`;
+                if ((m = q.match(/^~(.+)$/))) return `${m[1]}.x`;
+                if ((m = q.match(/^\^(.+)$/))) return `${m[1]} or newer, same major`;
+                if ((m = q.match(/^=(.+)$/))) return `exactly ${m[1]}`;
+                return q;
+            }).join(', ');
+        };
+        // Build tags (+mc1.21.1) don't affect the comparison, so leave them out.
+        return String(range).replace(/\+[\w.-]+/g, '').split('||').map(one).join(' or ');
+    }
+
+    // "Needed by Lootr (5.0.0 or newer), Auth Me" for a dependency row.
+    function neededBy(list) {
+        if (!list?.length) return null;
+        const shown = list.slice(0, 3).map(r => (r.versions ? `${r.title} (${rangeText(r.versions)})` : r.title));
+        if (list.length > 3) shown.push(`${list.length - 3} more`);
+        return h('div.note.needs', `Needed by ${shown.join(', ')}`);
+    }
+
     const DepsPicker = {
         render(container, deps, snap, { title, empty, onDone, compact = false } = {}) {
             const picked = new Set(deps.filter(d => !d.providedBy?.length).map(d => d.key));
@@ -398,10 +439,10 @@
             const rows = deps.map(d => {
                 const note = d.providedBy?.length
                     ? h('div.note.bundled', `Already ${d.bundledOnly ? 'bundled inside' : 'provided by'} ${d.providedBy.map(p => `${p.title}${p.version ? ` (${p.id} ${p.version})` : ''}`).slice(0, 2).join(', ')}`)
-                    : h('div.note', [d.platforms.modrinth ? 'Modrinth' : null, d.platforms.curseforge ? 'CurseForge' : null].filter(Boolean).join(' and '));
+                    : h('div.note', [d.platforms.modrinth ? 'Modrinth' : null, d.platforms.curseforge ? (d.platforms.curseforge.blocked ? 'CurseForge (download by hand)' : 'CurseForge') : null].filter(Boolean).join(' and '));
                 return h('div.dep',
                     UI.checkbox(picked.has(d.key), (v) => { if (v) picked.add(d.key); else picked.delete(d.key); sync(); }),
-                    img(d.icon), h('div', { style: { minWidth: 0 } }, h('div.title.ellipsis', d.title), note),
+                    img(d.icon), h('div', { style: { minWidth: 0 } }, h('div.title.ellipsis', d.title), note, neededBy(d.requiredBy)),
                     h('span.twins', h(`span.twin.mr${d.platforms.modrinth ? '.on' : ''}`), h(`span.twin.cf${d.platforms.curseforge ? '.on' : ''}`)));
             });
             addBtn.addEventListener('click', async () => {

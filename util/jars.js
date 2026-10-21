@@ -51,8 +51,11 @@ function parseJsonLoose(buf) {
     try { return JSON.parse(stripJsonComments(buf.toString('utf8'))); } catch { return null; }
 }
 
+// Loader and runtime ids every mod depends on: not worth listing as dependencies.
+const PLATFORM_IDS = new Set(['minecraft', 'java', 'forge', 'neoforge', 'fabricloader', 'fabric-loader', 'quilt_loader']);
+
 function parseModsToml(text, jarVersion) {
-    const mods = [], incompatible = [], depSides = [];
+    const mods = [], incompatible = [], depSides = [], depends = [];
     let clientSideOnly = false;
     const blocks = text.split(/^\s*\[\[/m);
     for (const block of blocks) {
@@ -68,10 +71,13 @@ function parseModsToml(text, jarVersion) {
             const id = val('modId');
             if (id && (type === 'incompatible' || type === 'discouraged')) incompatible.push({ id, versions: val('versionRange') || '*', type });
             else if (id) depSides.push((val('side') || 'BOTH').toUpperCase());
+            // Old Forge uses mandatory=true, NeoForge uses type="required".
+            const required = type ? type === 'required' : /^\s*mandatory\s*=\s*true/m.test(block);
+            if (id && required && !PLATFORM_IDS.has(id)) depends.push({ id, versions: val('versionRange') || '*' });
             void mandatory;
         }
     }
-    return { mods, incompatible, clientSideOnly, depSides };
+    return { mods, incompatible, clientSideOnly, depSides, depends };
 }
 
 function manifestVersion(buf) {
@@ -100,7 +106,7 @@ function classStrings(buf) {
 async function describe(src, depth = 0) {
     const entries = await src.entries();
     const get = async (n) => (entries.has(n) ? src.readEntry(entries.get(n)) : null);
-    const out = { ids: [], bundled: [], incompatible: [], loaders: [], side: { declared: null, clientDeps: false, serverCrash: null } };
+    const out = { ids: [], bundled: [], incompatible: [], depends: [], loaders: [], side: { declared: null, clientDeps: false, serverCrash: null } };
     const nested = [];
     const serverEntrypoints = [];
 
@@ -112,6 +118,7 @@ async function describe(src, depth = 0) {
             out.ids.push({ id: j.id, version: String(j.version ?? ''), name: j.name || j.id });
             for (const p of [].concat(j.provides || [])) if (typeof p === 'string') out.ids.push({ id: p, version: String(j.version ?? ''), name: j.name || p, provided: true });
             for (const [id, range] of Object.entries(j.breaks || {})) out.incompatible.push({ id, versions: [].concat(range).join(' || ') });
+            for (const [id, range] of Object.entries(j.depends || {})) if (!PLATFORM_IDS.has(id)) out.depends.push({ id, versions: [].concat(range).join(' || ') || '*' });
             for (const jar of j.jars || []) if (jar?.file) nested.push(jar.file);
             if (j.environment === 'client' || j.environment === 'server') out.side.declared = j.environment;
             for (const key of ['main', 'server']) for (const e of [].concat(j.entrypoints?.[key] || [])) serverEntrypoints.push(typeof e === 'string' ? e : e?.value);
@@ -121,6 +128,10 @@ async function describe(src, depth = 0) {
     if (quilt) {
         const j = parseJsonLoose(quilt)?.quilt_loader;
         if (j?.id && !out.ids.some(x => x.id === j.id)) { out.loaders.push('quilt'); out.ids.push({ id: j.id, version: String(j.version ?? ''), name: j.metadata?.name || j.id }); }
+        for (const d of [].concat(j?.depends || [])) {
+            const id = typeof d === 'string' ? d : d?.id;
+            if (id && !d?.optional && !PLATFORM_IDS.has(id) && !out.depends.some(x => x.id === id)) out.depends.push({ id, versions: [].concat(d?.versions || '*').join(' || ') });
+        }
         const root = parseJsonLoose(quilt);
         const env = root?.minecraft?.environment;
         if (env === 'client' || env === 'dedicated_server') out.side.declared = env === 'client' ? 'client' : 'server';
@@ -134,6 +145,7 @@ async function describe(src, depth = 0) {
         out.loaders.push(toml.includes('neoforge') ? 'neoforge' : 'forge');
         for (const m of parsed.mods) if (!out.ids.some(x => x.id === m.id)) out.ids.push(m);
         out.incompatible.push(...parsed.incompatible);
+        for (const d of parsed.depends) if (!out.depends.some(x => x.id === d.id)) out.depends.push(d);
         if (parsed.clientSideOnly) out.side.declared = 'client';
         // Forge / NeoForge client mods mark every dependency side="CLIENT". Common mods use BOTH.
         if (parsed.depSides.length && parsed.depSides.every(x => x === 'CLIENT')) out.side.clientDeps = true;

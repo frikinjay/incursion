@@ -158,6 +158,7 @@
         // Tell main we're drawn so it can swap out the splash.
         requestAnimationFrame(() => requestAnimationFrame(() => call('app:ready').catch(() => {})));
         setTimeout(() => document.documentElement.classList.remove('booting'), 600);
+        if (info.firstRun) setTimeout(() => Setup.open(), 700);
         App.gameVersions().catch(() => {});
     })().catch(err => { call('app:ready').catch(() => {}); UI.Island.error(err); });
 })();

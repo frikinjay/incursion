@@ -283,7 +283,7 @@ async function importPack({ source, target, name, gameVersion, loader, loaderVer
             const cfPart = j.cf && cfMod && j.cf.file.url ? { mod: cfMod, file: j.cf.file } : null;
             if (!mrPart && !cfPart) { unknown.push(path.basename(j.file)); await fs.copy(j.file, path.join(overrides, content.typeOf(j.type).folder, path.basename(j.file))); continue; }
             const entry = api.toEntry({ modrinth: mrPart, curseforge: cfPart }, { type: j.type });
-            const k = String(entry.ids.curseforge || entry.ids.modrinth);
+            const k = String(entry.ids.curseforge || entry.ids.modrinth || entry.ids.local);
             if (seen.has(k)) continue;
             seen.add(k);
             if (j.optional) entry.optional = true;

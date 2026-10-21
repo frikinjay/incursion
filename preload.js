@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Allow-listed bridge. Every call resolves to { ok, data } or { ok: false, error }.
 const CHANNELS = new Set([
-    'app:info', 'app:theme', 'app:ready',
+    'app:info', 'app:theme', 'app:ready', 'app:setup-done',
     'settings:get', 'settings:keys', 'settings:check',
     'cache:stats', 'cache:clear',
     'versions:game', 'versions:loader',
@@ -18,7 +18,7 @@ const CHANNELS = new Set([
     'cfservice:status', 'cfservice:set', 'cfservice:verify', 'cfservice:forget',
     'backups:list', 'backups:create', 'backups:restore', 'backups:delete', 'backups:reveal',
     'packs:versions', 'packs:set-version', 'packs:mod-meta', 'packs:disable', 'packs:deps', 'packs:release', 'packs:merge',
-    'packs:untracked', 'packs:untracked-refresh', 'packs:adopt', 'packs:trash-jars',
+    'packs:untracked', 'packs:untracked-refresh', 'packs:adopt', 'packs:trash-jars', 'packs:manual-file', 'packs:manual-remove',
     'import:pick', 'import:link', 'import:run',
     'files:list', 'files:read', 'files:write', 'files:create', 'files:rename', 'files:delete', 'files:reveal', 'files:to-overrides',
     'publish:check', 'publish:run', 'publish:server', 'packs:server-preview',

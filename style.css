@@ -561,6 +561,7 @@ select.field { display: none; } /* replaced by the custom pop-up (components.js)
 .dep .title { font-weight: 600; line-height: 1.25; }
 .dep .note { font-size: 12px; color: var(--color-muted); line-height: 1.35; }
 .dep .note.bundled { color: var(--color-ok); }
+.dep .note.needs { margin-top: 1px; }
 .cbox { position: relative; width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--color-rule-2); background: var(--color-surface); display: grid; place-items: center; padding: 0; transition: background-color var(--dur-micro) var(--ease-out); }
 .cbox::before { content: ''; position: absolute; inset: -10px; }
 .cbox .i { width: 11px; height: 11px; stroke-width: 3; color: var(--color-on-accent); opacity: 0; }
@@ -583,6 +584,13 @@ select.field { display: none; } /* replaced by the custom pop-up (components.js)
 @media (hover: hover) { .cell.link:hover { background: var(--color-paper); } }
 .cell.link > .i { color: var(--color-faint); }
 .cell.col { flex-direction: column; align-items: stretch; gap: var(--space-xs); }
+.setup-hero { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-lg); }
+.setup-hero img { width: 56px; height: 56px; flex: none; }
+.setup-hero h2 { margin: 0 0 4px; }
+.setup-hero p { margin: 0; color: var(--color-ink-2); }
+.setup .group-title { margin-top: 0; }
+.setup-path { flex: 1; min-width: 0; font-size: 12px; user-select: text; }
+.cell.btns { justify-content: flex-end; flex-wrap: wrap; gap: 6px; padding-block: var(--space-sm); }
 .cell .t { font-weight: 500; line-height: 1.3; }
 .cell .d { font-size: 12px; color: var(--color-muted); margin-top: 3px; line-height: 1.4; }
 .inspector-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-xs); margin: var(--space-xs) var(--space-lg) var(--space-lg); }
@@ -632,6 +640,7 @@ select.field { display: none; } /* replaced by the custom pop-up (components.js)
 .plat-links { display: inline-flex; gap: 2px; align-items: center; margin-left: 2px; }
 .plat-link { position: relative; width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: var(--r-control); background: transparent; transition: background-color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out); }
 .plat-link::before { content: ''; position: absolute; inset: -4px; }
+.plat-link.blocked::after { content: ''; position: absolute; right: 1px; bottom: 1px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-warn); box-shadow: 0 0 0 1.5px var(--color-surface); }
 .plat-link.mr { color: var(--color-mr); }
 .plat-link.cf { color: var(--color-cf); }
 @media (hover: hover) { .plat-link:hover { background: var(--color-surface); border-color: var(--color-rule); } }
@@ -789,6 +798,7 @@ pre.md { white-space: pre-wrap; font-family: var(--font-mono); font-size: 11.5px
 .issue .ic { width: 30px; height: 30px; border-radius: var(--r-control); display: grid; place-items: center; border: 1px solid var(--color-rule); }
 .issue .ic.error { color: var(--color-bad); background: var(--color-bad-wash); border-color: color-mix(in oklab, var(--color-bad) 30%, var(--color-rule)); }
 .issue .ic.warn { color: var(--color-warn); background: var(--color-warn-wash); border-color: color-mix(in oklab, var(--color-warn) 35%, var(--color-rule)); }
+.issue .ic.info { color: var(--accent-ink); background: var(--accent-wash); border-color: color-mix(in oklab, var(--accent) 35%, var(--color-rule)); }
 .issue .ic.ok { color: var(--color-ok); background: var(--color-ok-wash); border-color: color-mix(in oklab, var(--color-ok) 30%, var(--color-rule)); }
 .issue .t { font-weight: 600; line-height: 1.3; }
 .issue .d { color: var(--color-ink-2); font-size: 12px; margin-top: 3px; line-height: 1.45; }
@@ -952,6 +962,11 @@ html.theme-switch::view-transition-new(*) { animation: vt-in var(--dur-long) var
 
 .twin-slot { position: relative; display: inline-grid; }
 .twin-slot.upd::after { content: ''; position: absolute; right: -3px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-ok); box-shadow: 0 0 0 1.5px var(--color-surface); }
+/* Added by hand: an accent dot at the bottom; a blocked download is the logo in outline colours. */
+.twin-slot.manual::before { content: ''; position: absolute; right: -3px; bottom: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 1.5px var(--color-surface); }
+.twin.pending { background: var(--color-warn); opacity: .55; }
+.bundled-note { color: var(--color-warn); align-items: flex-start; }
+.bundled-note .i { flex: none; margin-top: 2px; }
 .row .file.split { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; font-size: 11px; }
 .row .file .vline { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .row .file .vline .twin { width: 10px; height: 10px; flex: none; }

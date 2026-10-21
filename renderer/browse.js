@@ -212,8 +212,8 @@
         function platformLinks(item) {
             const link = (pl, label) => {
                 const p = item.platforms[pl];
-                const b = h(`button.plat-link.${pl === 'modrinth' ? 'mr' : 'cf'}`, {
-                    title: p ? `Open on ${label}` : `Not on ${label}`, 'aria-label': p ? `Open ${item.title} on ${label}` : `Not on ${label}`, disabled: !p,
+                const b = h(`button.plat-link.${pl === 'modrinth' ? 'mr' : 'cf'}${p?.blocked ? '.blocked' : ''}`, {
+                    title: p?.blocked ? `Open on ${label}. Its author doesn’t allow apps to download it, so you’ll download the file yourself.` : p ? `Open on ${label}` : `Not on ${label}`, 'aria-label': p ? `Open ${item.title} on ${label}` : `Not on ${label}`, disabled: !p,
                     on: { click: (e) => { e.stopPropagation(); PageViewer.open(p.url, { platform: pl, title: item.title }); } }
                 }, PageViewer.brand(pl));
                 return b;

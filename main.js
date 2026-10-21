@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, nativeImage, safeStorage, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, nativeImage, safeStorage, protocol, net, session } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
@@ -199,7 +199,7 @@ function task(label) {
     return t;
 }
 
-handle('app:info', async () => ({ version: app.getVersion(), platform: process.platform, dark: nativeTheme.shouldUseDarkColors, encrypted: secretBox.available, dev: !!process.env.INCURSION_DEV, prefs: await prefs() }));
+handle('app:info', async () => ({ version: app.getVersion(), platform: process.platform, dark: nativeTheme.shouldUseDarkColors, encrypted: secretBox.available, dev: !!process.env.INCURSION_DEV, firstRun, prefs: await prefs() }));
 handle('app:theme', async ({ theme }) => {
     nativeTheme.themeSource = ['light', 'dark'].includes(theme) ? theme : 'system';
     await storage.saveSettings({ theme: nativeTheme.themeSource });
@@ -286,6 +286,28 @@ handle('java:install', async ({ major }) => {
 });
 handle('java:uninstall', ({ major }) => java.uninstall(Number(major)));
 handle('java:dir', async () => shell.openPath(java.managedDir()));
+
+// A fresh profile asks where game files should go before anything is written there.
+let firstRun = false;
+async function initDataDir() {
+    const { prefs: p } = await storage.getSettings();
+    let dir = p.dataDir || null;
+    const legacy = datadir.legacyRoot();
+    if (!dir && legacy && await datadir.hasGameFiles(legacy)) {
+        dir = legacy;
+        await storage.saveSettings({ prefs: { dataDir: dir } });
+    }
+    datadir.set(dir);
+    if (p.setupDone) return;
+    const fresh = !(await storage.getLibrary()).length && !(await fs.pathExists(datadir.get()));
+    if (fresh) firstRun = true;
+    else await storage.saveSettings({ prefs: { setupDone: true } });
+}
+handle('app:setup-done', async () => {
+    firstRun = false;
+    await storage.saveSettings({ prefs: { setupDone: true } });
+    return true;
+});
 
 const dataInfo = async () => ({ path: datadir.get(), defaultPath: datadir.defaultRoot(), isDefault: datadir.isDefault() });
 handle('data:info', dataInfo);
@@ -410,6 +432,13 @@ handle('packs:deps', ({ path: p }) => packs.dependencies(p));
 handle('packs:untracked', ({ path: p }) => packs.reviewUntracked(p));
 handle('packs:untracked-refresh', ({ path: p }) => packs.refreshUntracked(p));
 handle('packs:adopt', ({ path: p, ids, choices }) => packs.adoptUntracked(p, ids, choices));
+handle('packs:manual-file', async ({ path: p, key, platform, source }) => {
+    if (source !== 'file') return packs.setManualFile(p, key, platform, { source: 'copy' });
+    const r = await dialog.showOpenDialog(win, { title: 'Choose the mod file', properties: ['openFile'], filters: [{ name: 'Mod files', extensions: ['jar', 'zip'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return packs.setManualFile(p, key, platform, { source: 'file', file: r.filePaths[0] });
+});
+handle('packs:manual-remove', ({ path: p, key, platform }) => packs.removeManualFile(p, key, platform));
 // Leftover jars go to the trash, never a hard delete. Plain names inside a platform mods folder only.
 handle('packs:trash-jars', async ({ path: p, files: list }) => {
     for (const f of list || []) {
@@ -615,13 +644,17 @@ app.on('second-instance', () => {
 });
 handle('app:ready', () => { setTimeout(revealMain, 60); return true; });
 
+// Incursion never needs the camera, microphone, location or notifications. Only the app window may copy to the clipboard.
+app.on('session-created', (ses) => ses.setPermissionRequestHandler((_wc, permission, cb) => cb(false)));
+
 app.whenReady().then(async () => {
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'clipboard-sanitized-write'));
     const userData = app.getPath('userData');
     const { cacheFile } = storage.init(userData, secretBox);
     const theme = (await storage.getSettings()).theme || 'system';
     showSplash(theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors));
     await cache.init(cacheFile);
-    datadir.set((await storage.getSettings()).prefs.dataDir || null);
+    await initDataDir();
     java.init(userData);
     files.init({ trashItem: (p) => shell.trashItem(p) });
     const bgDir = path.join(userData, 'backgrounds');

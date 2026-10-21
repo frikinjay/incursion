@@ -265,13 +265,15 @@ const storage = {
         const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         const modlist = `<ul>\n${included.map(m => `<li><a href="${esc(m.links.curseforge)}">${esc(m.names.curseforge)} (by ${esc(m.authors?.curseforge || 'Unknown')})</a></li>`).join('\n')}\n</ul>\n`;
         const file = path.join(outDir, `${safeName(meta.name)}-${safeName(meta.version || '1.0.0')}.zip`);
+        const bundled = [];
         await zip(file, async (archive) => {
             archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
             archive.append(modlist, { name: 'modlist.html' });
             archive.append(JSON.stringify(storage.portableMeta(meta), null, 2), { name: META_FILE });
             await appendOverrides(archive, meta.path, 'overrides');
+            await appendManualFiles(archive, meta, 'curseforge', bundled);
         }, onProgress);
-        return { path: file, count: included.length, skipped };
+        return { path: file, count: included.length + bundled.length, skipped, bundled };
     },
 
     async exportModrinth(meta, outDir, onProgress = () => {}) {
@@ -301,12 +303,14 @@ const storage = {
             dependencies: { minecraft: meta.gameVersion, [l.mrpack]: meta.loaderVersion }
         };
         const file = path.join(outDir, `${safeName(meta.name)}-${safeName(meta.version || '1.0.0')}.mrpack`);
+        const bundled = [];
         await zip(file, async (archive) => {
             archive.append(JSON.stringify(index, null, 2), { name: 'modrinth.index.json' });
             archive.append(JSON.stringify(storage.portableMeta(meta), null, 2), { name: META_FILE });
             await appendOverrides(archive, meta.path, 'overrides');
+            await appendManualFiles(archive, meta, 'modrinth', bundled);
         }, (pct) => onProgress(80 + Math.round(pct / 5)));
-        return { path: file, count: files.length, skipped };
+        return { path: file, count: files.length + bundled.length, skipped, bundled };
     }
 };
 
@@ -413,6 +417,18 @@ storage.exportServer = async function exportServer(meta, outDir, onProgress = ()
 async function appendOverrides(archive, packPath, prefix) {
     const dir = path.join(packPath, 'overrides');
     if (await fs.pathExists(dir)) archive.directory(dir, prefix);
+}
+
+// Files added by hand can't be linked from the platform's manifest, so they ship inside the pack.
+async function appendManualFiles(archive, meta, pl, out) {
+    for (const m of meta.mods) {
+        const r = m.manual?.[pl];
+        if (!r || r.from === 'download' || !m.installedFiles?.[pl]) continue;
+        const src = entryFile(meta.path, pl, m);
+        if (!(await fs.pathExists(src))) continue;
+        archive.file(src, { name: `overrides/${content.typeOf(m).folder}/${safeFileName(m.installedFiles[pl])}` });
+        out.push(m.names?.[pl] || m.names?.curseforge || m.names?.modrinth || m.installedFiles[pl]);
+    }
 }
 
 function zip(file, fill, onProgress) {

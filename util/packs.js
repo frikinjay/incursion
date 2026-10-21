@@ -11,6 +11,7 @@ const exporters = require('./exporters');
 const profiles = require('./profiles');
 const links = require('./links');
 const configs = require('./configs');
+const manual = require('./manual');
 
 const { modKey } = api;
 const AUTO_CHECK_AFTER = 30 * 60 * 1000;
@@ -45,7 +46,7 @@ function dropDuplicates(meta) {
     const seen = new Set();
     const before = meta.mods.length;
     meta.mods = meta.mods.filter(m => {
-        const k = `${m.type || 'mod'}|${m.ids?.curseforge || ''}|${m.ids?.modrinth || ''}`;
+        const k = `${m.type || 'mod'}|${m.ids?.curseforge || ''}|${m.ids?.modrinth || ''}|${m.ids?.local || ''}`;
         if (seen.has(k)) return false;
         seen.add(k);
         return true;
@@ -70,7 +71,7 @@ function migrate(meta) {
 }
 
 // Bump when scanEntry learns something new. Older scans are redone in the background when the pack opens.
-const SCAN_VERSION = 2;
+const SCAN_VERSION = 3;
 
 async function scanEntry(packPath, m) {
     if (m.type && m.type !== 'mod') return undefined;
@@ -81,7 +82,7 @@ async function scanEntry(packPath, m) {
         if (!(await fs.pathExists(file))) continue;
         try {
             const d = await jars.inspectJar(file);
-            return { v: SCAN_VERSION, file: f, ids: d.ids, bundled: d.bundled, incompatible: d.incompatible, loaders: d.loaders, side: d.side };
+            return { v: SCAN_VERSION, file: f, ids: d.ids, bundled: d.bundled, incompatible: d.incompatible, depends: d.depends, loaders: d.loaders, side: d.side };
         } catch { return { file: f, ids: [], bundled: [], incompatible: [], error: true }; }
     }
     return m.contents || null;
@@ -162,14 +163,15 @@ class PackService {
             const meta = await storage.loadPack(packPath);
             const stored = await storage.loadPending(packPath);
             const pending = stored && stored.v === 2 ? stored : { v: 2, updates: {}, checkedAt: 0 };
-            s = { meta, pending, missing: {}, untracked: { modrinth: [], curseforge: [] }, saveTimer: null };
+            s = { meta, pending, missing: {}, manualMissing: {}, untracked: { modrinth: [], curseforge: [] }, saveTimer: null };
             this.open.set(packPath, s);
             if (migrate(meta)) this._changed(s);
             if (dropDuplicates(meta)) this._changed(s);
             links.absorbPack(meta);
             await fs.ensureDir(path.join(packPath, 'overrides', 'config')).catch(() => {});
-            s.missing = await storage.findMissing(packPath, meta.mods, modKey);
             s.untracked = await untracked.list(packPath, meta.mods);
+            await this._adoptCopies(packPath, s);
+            await this._findMissing(packPath, s);
             this._scanContents(packPath).catch(() => {});
         }
         return s;
@@ -181,7 +183,8 @@ class PackService {
             updates: s.pending.updates,
             checkedAt: s.pending.checkedAt || 0,
             missing: s.missing,
-            issues: [...insights.issues(s.meta, { missing: s.missing }), ...untrackedIssue(s.untracked)],
+            manualMissing: s.manualMissing,
+            issues: [...insights.issues(s.meta, { missing: s.missing, manualMissing: s.manualMissing }), ...untrackedIssue(s.untracked)],
             untracked: s.untracked,
             busy: [...(this.busy.get(s.meta.path) || [])]
         };
@@ -246,9 +249,30 @@ class PackService {
 
     async metaOf(packPath) { return (await this._get(packPath)).meta; }
 
+    // Missing platform files can be downloaded again; missing manual files can't, so they're kept apart.
+    async _findMissing(packPath, s) {
+        const all = await storage.findMissing(packPath, s.meta.mods, modKey);
+        s.missing = {};
+        s.manualMissing = {};
+        for (const m of s.meta.mods) {
+            const k = modKey(m);
+            for (const pl of all[k] || []) ((manual.isManual(m, pl) ? s.manualMissing : s.missing)[k] ||= []).push(pl);
+        }
+    }
+
+    async _adoptCopies(packPath, s) {
+        const adopted = await manual.adoptExactCopies(packPath, s.meta, s.untracked).catch(() => []);
+        if (!adopted.length) return;
+        for (const m of adopted) m.updatedAt = Date.now();
+        s.untracked = await untracked.list(packPath, s.meta.mods);
+        await this._findMissing(packPath, s);
+        this._changed(s);
+    }
+
     async load(packPath) {
         const s = await this._get(packPath);
         s.untracked = await untracked.list(packPath, s.meta.mods).catch(() => s.untracked);
+        await this._adoptCopies(packPath, s);
         const now = Date.now();
         if (s.meta.mods.length && now - (s.pending.checkedAt || 0) > AUTO_CHECK_AFTER) {
             this.checkUpdates(packPath, { quiet: true }).catch(() => {});
@@ -352,7 +376,7 @@ class PackService {
             s.meta.mods.push(e);
             have.add(modKey(e));
         }
-        s.missing = await storage.findMissing(packPath, s.meta.mods, modKey);
+        await this._findMissing(packPath, s);
         s.untracked = await untracked.list(packPath, s.meta.mods);
         this._changed(s);
         await this._flush(packPath);
@@ -372,17 +396,54 @@ class PackService {
             const t = task(ids.length === 1 ? 'Adding a Mod File' : `Adding ${ids.length} Mod Files`);
             try {
                 const items = (await untracked.review(packPath, s.meta)).filter(i => ids.includes(i.id));
+                let handled = 0;
+                for (const item of items.filter(i => i.plan === 'manual')) {
+                    const m = s.meta.mods.find(x => modKey(x) === item.trackedKey);
+                    if (!m || m.installedFiles?.[item.platform]) continue;
+                    const name = item.files[0].name;
+                    const placed = await manual.place(packPath, s.meta, m, item.platform, path.join(storage.paths.modsDir(packPath, item.platform), name), name, { from: 'file', version: null });
+                    const d = await jars.inspectJar(storage.paths.entryFile(packPath, item.platform, m)).catch(() => null);
+                    placed.version = d?.ids?.[0]?.version || null;
+                    m.updatedAt = Date.now();
+                    handled++;
+                }
+                const locals = [];
+                for (const item of items.filter(i => i.plan === 'unknown')) locals.push(await this._localEntry(packPath, s.meta, item.files[0]));
                 const entries = await untracked.adopt(packPath, s.meta, items, choices);
-                await this.addEntries(packPath, entries);
-                t.done(`${entries.length} added`);
-                return { added: entries.length, skipped: items.length - entries.length };
+                await this.addEntries(packPath, [...entries, ...locals]);
+                if (handled) { s.untracked = await untracked.list(packPath, s.meta.mods); await this._findMissing(packPath, s); this._changed(s); }
+                const added = entries.length + locals.length + handled;
+                t.done(`${added} added`);
+                return { added, skipped: items.length - added };
             } catch (err) { t.fail(err.message); throw err; }
         });
+    }
+
+    // A jar neither platform knows, kept as a mod of its own: the same file in both platform folders.
+    async _localEntry(packPath, packMeta, { platform, name }) {
+        const src = path.join(storage.paths.modsDir(packPath, platform), name);
+        const d = await jars.inspectJar(src).catch(() => null);
+        const id = d?.ids?.find(i => !i.provided);
+        const sha1 = await manual.sha1Of(src);
+        const title = id?.name || name.replace(/\.jar$/i, '');
+        const entry = {
+            ids: { curseforge: null, modrinth: null, local: `local-${sha1.slice(0, 12)}` },
+            names: { curseforge: title, modrinth: title },
+            slugs: { curseforge: null, modrinth: null }, authors: { curseforge: null, modrinth: null },
+            environments: { curseforge: null, modrinth: null }, installedFiles: { curseforge: null, modrinth: null },
+            links: { curseforge: null, modrinth: null }, icons: { curseforge: null, modrinth: null },
+            fileLinks: { curseforge: null, modrinth: null }, hashes: { curseforge: null, modrinth: null },
+            sizes: { curseforge: null, modrinth: null }, deps: { curseforge: [], modrinth: [] }, incompat: { curseforge: [], modrinth: [] },
+            meta: {}, summary: '', dateAdded: Date.now()
+        };
+        for (const pl of manual.PLATFORMS) await manual.place(packPath, packMeta, entry, pl, src, name, { from: 'file', version: id?.version || null });
+        return entry;
     }
 
     async refreshUntracked(packPath) {
         const s = await this._get(packPath);
         s.untracked = await untracked.list(packPath, s.meta.mods);
+        await this._adoptCopies(packPath, s);
         this._emitSoon(s);
         return this.snapshot(s);
     }
@@ -520,6 +581,7 @@ class PackService {
                 : { curseforge: { id: mod.ids.curseforge, exactFileId: versionId } };
             const r = await api.resolve({ platforms, gameVersion: s.meta.gameVersion, loader: s.meta.loader, want: platform, type: mod.type });
             if (!r[platform]) throw new Error(r.errors[0] || 'That version is not available.');
+            if (r.curseforge?.blocked) throw new Error('Its author doesn’t allow apps to download it. Download it from CurseForge, then choose the file in the mod’s details.');
             const patch = platform === 'modrinth'
                 ? { modrinth: { fileName: r.modrinth.version.fileName, url: r.modrinth.version.url, versionId: r.modrinth.version.id, versionNumber: r.modrinth.version.number, date: r.modrinth.version.date, sha1: r.modrinth.version.sha1, sha512: r.modrinth.version.sha512, size: r.modrinth.version.size, deps: r.modrinth.version.deps, incompat: r.modrinth.version.incompat } }
                 : { curseforge: { fileName: r.curseforge.file.fileName, url: r.curseforge.file.url, fileId: r.curseforge.file.id, displayName: r.curseforge.file.displayName, date: r.curseforge.file.date, sha1: r.curseforge.file.sha1, size: r.curseforge.file.size, deps: r.curseforge.file.deps, incompat: r.curseforge.file.incompat, env: r.curseforge.file.env } };
@@ -553,7 +615,7 @@ class PackService {
                 m.disabled = disabled ? true : undefined;
             } catch (err) { failed.push({ key: modKey(m), error: err.message }); }
         }
-        s.missing = await storage.findMissing(packPath, s.meta.mods, modKey);
+        await this._findMissing(packPath, s);
         this._changed(s);
         await this._flush(packPath);
         if (failed.length) throw new Error(`Couldn’t rename ${failed.length === 1 ? 'a file' : `${failed.length} files`}: ${failed[0].error} Close the game if it is running and try again.`);
@@ -590,9 +652,63 @@ class PackService {
         mr.dateAdded = Math.min(mr.dateAdded || Date.now(), cf.dateAdded || Date.now());
         s.meta.mods = s.meta.mods.filter(m => m !== cf);
         for (const k of keys) delete s.pending.updates[String(k)];
-        s.missing = await storage.findMissing(packPath, s.meta.mods, modKey);
+        await this._findMissing(packPath, s);
         this._changed(s);
         return this.snapshot(s);
+    }
+
+    // source: 'copy' takes the other platform's file, 'file' a jar the player picked.
+    async setManualFile(packPath, key, pl, { source = 'copy', file } = {}) {
+        if (!manual.PLATFORMS.includes(pl)) throw new Error('Unknown platform.');
+        return this._exclusive(packPath, 'manual', async () => {
+            const s = await this._get(packPath);
+            const m = s.meta.mods.find(x => modKey(x) === String(key));
+            if (!m) throw new Error('That mod is no longer in the pack.');
+            const current = m.manual?.[pl];
+            if (m.ids[pl] && current?.from !== 'download') throw new Error(`${manual.NAME[pl]} already has its own file for this mod.`);
+            let src, name, record;
+            if (source === 'copy') {
+                const o = manual.otherOf(pl);
+                if (!m.installedFiles?.[o]) throw new Error(`There is no ${manual.NAME[o]} file to copy.`);
+                src = storage.paths.entryFile(packPath, o, m);
+                if (!(await fs.pathExists(src))) throw new Error(`The ${manual.NAME[o]} file is missing. Repair the pack first.`);
+                name = m.installedFiles[o];
+                record = { from: o, sourceFile: m.installedFiles[o], version: manual.versionOf(m, o) };
+            } else {
+                const ext = (m.type || 'mod') === 'mod' ? /\.jar$/i : /\.(zip|jar)$/i;
+                if (!file || !ext.test(file) || !(await fs.pathExists(file))) throw new Error('Choose a mod file (.jar).');
+                src = file;
+                name = path.basename(file);
+                record = current?.from === 'download' ? { ...current } : { from: 'file', version: null };
+            }
+            const placed = await manual.place(packPath, s.meta, m, pl, src, name, record);
+            if (placed.from === 'download') placed.matches = !placed.expectedSha1 || placed.expectedSha1 === placed.sha1;
+            if (placed.from === 'file' && (m.type || 'mod') === 'mod') {
+                const d = await jars.inspectJar(storage.paths.entryFile(packPath, pl, m)).catch(() => null);
+                placed.version = d?.ids?.[0]?.version || null;
+            }
+            m.updatedAt = Date.now();
+            if (!m.contents) m.contents = await scanEntry(packPath, m);
+            s.untracked = await untracked.list(packPath, s.meta.mods);
+            await this._findMissing(packPath, s);
+            this._changed(s);
+            return this.snapshot(s);
+        });
+    }
+
+    async removeManualFile(packPath, key, pl) {
+        return this._exclusive(packPath, 'manual', async () => {
+            const s = await this._get(packPath);
+            const m = s.meta.mods.find(x => modKey(x) === String(key));
+            if (!m || !manual.isManual(m, pl)) throw new Error('That mod has no file added by hand for this platform.');
+            if (manual.isLocal(m)) throw new Error('This mod is only in the pack as a local file. Remove it from the pack instead.');
+            await manual.remove(packPath, m, pl);
+            m.updatedAt = Date.now();
+            s.untracked = await untracked.list(packPath, s.meta.mods);
+            await this._findMissing(packPath, s);
+            this._changed(s);
+            return this.snapshot(s);
+        });
     }
 
     async linkMod(packPath, { platform, id, to = null, title, type = 'mod' }) {
@@ -622,7 +738,7 @@ class PackService {
                 t.done(changed ? 'Pack updated' : 'Linked');
             } catch (err) { t.fail(err.message); this._changed(s); throw err; }
         }
-        s.missing = await storage.findMissing(packPath, s.meta.mods, modKey);
+        await this._findMissing(packPath, s);
         this._changed(s);
         return { linked: true, updatedEntry: changed, type: mod?.type || type, snapshot: this.snapshot(s) };
     }
@@ -680,10 +796,25 @@ class PackService {
         const r = await api.resolve({ platforms: { [pl]: { id } }, gameVersion: s.meta.gameVersion, loader: s.meta.loader, want: pl, type: mod.type });
         if (!r[pl]) throw new Error(r.errors[0] || `No compatible ${pl === 'modrinth' ? 'Modrinth' : 'CurseForge'} file for this pack.`);
         const part = api.toEntry(r, { type: mod.type });
+        const before = mod.installedFiles?.[pl];
+        const wasManual = manual.isManual(mod, pl);
         for (const f of PLATFORM_FIELDS) (mod[f] ||= {})[pl] = part[f][pl];
         mod.meta = { ...(mod.meta || {}), ...metaFor(part.meta, pl) };
         await this._downloadEntry(packPath, mod, [pl]);
+        if (wasManual) this._dropManual(packPath, mod, pl, before);
+        if (part.manual?.[pl]) (mod.manual ||= {})[pl] = part.manual[pl];
         if (oldKey !== modKey(mod)) delete s.pending.updates[oldKey];
+    }
+
+    // The platform now has its own file for this mod: the hand-added one goes (unless it is that very file).
+    _dropManual(packPath, mod, pl, oldName) {
+        if (oldName && oldName !== mod.installedFiles?.[pl]) {
+            fs.removeSync(storage.paths.modFile(packPath, pl, `${oldName}${mod.disabled ? storage.paths.DISABLED : ''}`, mod.type));
+        }
+        if (mod.manual) {
+            delete mod.manual[pl];
+            if (!Object.keys(mod.manual).length) delete mod.manual;
+        }
     }
 
     _sameModFromOtherPlatform(meta, entry) {
@@ -703,8 +834,12 @@ class PackService {
     }
 
     _foldInto(s, mod, twin, pl) {
+        const before = mod.installedFiles?.[pl];
+        const wasManual = manual.isManual(mod, pl);
         for (const f of PLATFORM_FIELDS) (mod[f] ||= {})[pl] = twin[f]?.[pl] ?? (f === 'deps' || f === 'incompat' ? [] : null);
         mod.meta = { ...(mod.meta || {}), ...metaFor(twin.meta || {}, pl) };
+        if (wasManual) { try { this._dropManual(s.meta.path, mod, pl, before); } catch {} }
+        if (twin.manual?.[pl]) (mod.manual ||= {})[pl] = twin.manual[pl];
         delete s.pending.updates[modKey(twin)];
         s.meta.mods = s.meta.mods.filter(m => m !== twin);
     }

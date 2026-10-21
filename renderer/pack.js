@@ -31,6 +31,39 @@
         const same = (h1 && h1 === h2) || m.installedFiles.modrinth === m.installedFiles.curseforge || (c1 && c1 === c2) || mr === cf;
         return { same: !!same, mr, cf, mrShort: c1 || mr, cfShort: c2 || cf };
     }
+    // 'platform', 'manual' (a file added by hand), 'pending' (CurseForge blocks app downloads, no file yet) or null.
+    function sideState(m, pl) {
+        const r = m.manual?.[pl];
+        if (r) return r.from === 'download' && !r.sha1 ? 'pending' : 'manual';
+        return m.ids[pl] ? 'platform' : null;
+    }
+    // A copy whose original has a newer file: { from, was, now }, or null.
+    function copyOutdated(m, pl) {
+        const r = m.manual?.[pl];
+        if (!r || !PL_NAME[r.from]) return null;
+        const now = m.installedFiles?.[r.from];
+        if (!now || now === r.sourceFile) return null;
+        return { from: r.from, was: r.version || r.sourceFile, now: (r.from === 'modrinth' ? m.meta?.mrVersionNumber : m.meta?.cfDisplayName) || now };
+    }
+    const isLocal = (m) => !m.ids.curseforge && !m.ids.modrinth && !!m.ids.local;
+    function sidesTitle(m) {
+        return ['modrinth', 'curseforge'].map(pl => {
+            const st = sideState(m, pl);
+            if (st === 'platform') return PL_NAME[pl];
+            if (st === 'pending') return `${PL_NAME[pl]}: download needed`;
+            if (st === 'manual') return `${PL_NAME[pl]}: added by hand${PL_NAME[m.manual[pl].from] ? ` (copied from ${PL_NAME[m.manual[pl].from]})` : ''}`;
+            return `Not on ${PL_NAME[pl]}`;
+        }).join('\n');
+    }
+    function twinMarks(m, upd) {
+        return h('span.twins', { title: upd ? updateSummary(m, upd) : sidesTitle(m) },
+            ['modrinth', 'curseforge'].map(pl => {
+                const st = sideState(m, pl);
+                return h(`span.twin-slot${upd?.[pl] ? '.upd' : ''}${st === 'manual' ? '.manual' : ''}`,
+                    h(`span.twin.${pl === 'modrinth' ? 'mr' : 'cf'}${st === 'platform' || st === 'manual' ? '.on' : ''}${st === 'pending' ? '.pending' : ''}`));
+            }));
+    }
+
     function updateSummary(m, upd) {
         return ['modrinth', 'curseforge'].filter(pl => m.ids[pl]).map(pl => {
             const u = upd?.[pl];
@@ -121,7 +154,8 @@
                 updatesBtn.onclick = updates ? () => updateAll() : () => checkUpdates();
                 updatesBtn.title = snap.checkedAt ? `Last checked ${fmt.ago(snap.checkedAt)}` : '';
                 const errors = snap.issues.filter(i => i.severity === 'error').length;
-                tabs.setBadge('issues', snap.issues.length || null, errors ? 'red' : 'amber');
+                const problems = snap.issues.filter(i => i.severity !== 'info').length;
+                tabs.setBadge('issues', problems || null, errors ? 'red' : 'amber');
                 tabs.setBadge('mods', m.mods.length);
                 tabs.setBadge('releases', (m.releases || []).length || null);
             }
@@ -231,7 +265,7 @@
                 { value: 'any', label: 'All Content', short: 'Type' }, ...Object.values(Lib.TYPES).map(t => ({ value: t.id, label: t.label }))] }),
             UI.picker({ label: 'Platform', value: ui.platform, onChange: v => { ui.platform = v; refilter(true); }, options: [
                 { value: 'any', label: 'Any Platform', short: 'Platform' }, { value: 'both', label: 'On Both Platforms' }, { value: 'modrinth', label: 'Modrinth Only' }, { value: 'curseforge', label: 'CurseForge Only' },
-                { value: 'differ', label: 'Different Versions per Platform', short: 'Differ' }] }),
+                { value: 'differ', label: 'Different Versions per Platform', short: 'Differ' }, { value: 'manual', label: 'Files Added by Hand', short: 'By Hand' }] }),
             UI.picker({ label: 'Side', value: ui.side, onChange: v => { ui.side = v; refilter(true); }, options: [
                 { value: 'any', label: 'Client and Server', short: 'Side' }, { value: 'client', label: 'Client Only' }, { value: 'server', label: 'Server Only' }] }),
             UI.picker({ label: 'Sort By', value: ui.sort, onChange: v => { ui.sort = v; refilter(true); }, options: [
@@ -305,6 +339,7 @@
                 if (ui.platform === 'modrinth' && !(mr && !cf)) return false;
                 if (ui.platform === 'curseforge' && !(cf && !mr)) return false;
                 if (ui.platform === 'differ' && platformVersions(m, snap.meta.gameVersion).same) return false;
+                if (ui.platform === 'manual' && !m.manual) return false;
                 if (ui.side !== 'any') {
                     const s = sideOf(m);
                     if (ui.side === 'client' && !(s.client && !s.server)) return false;
@@ -382,13 +417,14 @@
             img(modIcon(m)),
             h('div', { style: { minWidth: 0 } },
                 h('div.name', h('span', modTitle(m)),
-                    h('span.twins', { title: upd ? updateSummary(m, upd) : [m.ids.modrinth && 'Modrinth', m.ids.curseforge && 'CurseForge'].filter(Boolean).join(' and ') },
-                        h(`span.twin-slot${upd?.modrinth ? '.upd' : ''}`, h(`span.twin.mr${m.ids.modrinth ? '.on' : ''}`)),
-                        h(`span.twin-slot${upd?.curseforge ? '.upd' : ''}`, h(`span.twin.cf${m.ids.curseforge ? '.on' : ''}`))),
+                    twinMarks(m, upd),
                     !pv.same ? h('span.chip.sm.amber', { title: `Modrinth: ${pv.mr}\nCurseForge: ${pv.cf}` }, 'Versions Differ') : null,
                     Lib.typeOf(m).id !== 'mod' ? h('span.chip.sm', Lib.typeOf(m).one) : null,
                     m.pinned ? h('span.chip.sm.accent', { title: 'Pinned. Updates skip this item.' }, icon('pin'), 'Pinned') : null,
                     m.disabled ? h('span.chip.sm', { title: 'Turned off: its files end in .disabled and Play leaves it out.' }, 'Off') : null,
+                    isLocal(m) ? h('span.chip.sm', { title: 'Not on Modrinth or CurseForge. Exports bundle the file itself.' }, 'Local File') : null,
+                    ['modrinth', 'curseforge'].some(pl => sideState(m, pl) === 'pending') ? h('span.chip.sm.amber', { title: 'CurseForge doesn’t allow apps to download this mod. Download it yourself from the mod’s details.' }, 'Download Needed') : null,
+                    ['modrinth', 'curseforge'].map(pl => copyOutdated(m, pl)).filter(Boolean).map(o => h('span.chip.sm.amber', { title: `The ${PL_NAME[o.from]} file was updated (${o.was} → ${o.now}). The copy stays as it is until you update it.` }, 'Copy Outdated')),
                     miss && !upd ? h('span.chip.sm.amber', icon('warn'), 'File Missing') : null),
                 h('div.sub', author ? `by ${author}` : (m.summary || ''))),
             pv.same
@@ -430,13 +466,13 @@
                 { label: 'Show Details', icon: 'chev', onClick: () => Inspector.open(m) },
                 snap.updates[k] ? { label: 'Install update', icon: 'arrow-up', onClick: () => call('packs:apply', { path: p, keys: [k] }).catch(UI.Island.error) }
                     : { label: 'Check for Update', icon: 'refresh', onClick: () => call('packs:check', { path: p, keys: [k] }).then(r => UI.Island.toast(r.count ? 'Update Available' : 'Up to Date', modTitle(m))).catch(UI.Island.error) },
-                { label: 'Change Version…', icon: 'history', onClick: () => Versions.open(snap, m) },
+                isLocal(m) ? null : { label: 'Change Version…', icon: 'history', onClick: () => Versions.open(snap, m) },
                 snap.updates[k] ? { label: 'View Changelog…', icon: 'tag', onClick: () => Changelogs.open(snap, m) } : null,
                 snap.updates[k]?.modrinth && snap.updates[k]?.curseforge ? { label: 'Update Modrinth Only', icon: 'modrinth', onClick: () => call('packs:apply', { path: p, keys: [k], platforms: ['modrinth'] }).catch(UI.Island.error) } : null,
                 snap.updates[k]?.modrinth && snap.updates[k]?.curseforge ? { label: 'Update CurseForge Only', icon: 'curseforge', onClick: () => call('packs:apply', { path: p, keys: [k], platforms: ['curseforge'] }).catch(UI.Island.error) } : null,
-                { label: 'Link Platforms…', icon: 'link', onClick: () => linkEntry(snap, m) },
+                isLocal(m) ? null : { label: 'Link Platforms…', icon: 'link', onClick: () => linkEntry(snap, m) },
                 { label: m.pinned ? 'Unpin Version' : 'Pin Version', icon: 'pin', onClick: () => call('packs:mod-meta', { path: p, keys: [k], patch: { pinned: !m.pinned } }).catch(UI.Island.error) },
-                { label: 'Download Again', icon: 'download', onClick: () => call('packs:redownload', { path: p, keys: [k] }).catch(UI.Island.error) },
+                isLocal(m) ? null : { label: 'Download Again', icon: 'download', onClick: () => call('packs:redownload', { path: p, keys: [k] }).catch(UI.Island.error) },
                 'sep',
                 m.links?.modrinth ? { label: 'Open on Modrinth', icon: 'modrinth', onClick: () => PageViewer.open(m.links.modrinth, { platform: 'modrinth', title: modTitle(m) }) } : null,
                 m.links?.curseforge ? { label: 'Open on CurseForge', icon: 'curseforge', onClick: () => PageViewer.open(m.links.curseforge, { platform: 'curseforge', title: modTitle(m) }) } : null,
@@ -572,7 +608,7 @@
             const side = sideOf(m);
             const cell = (key, value) => value ? h('div.cell', h('span.k', key), h('span.v', { title: value }, value)) : null;
             const linkCell = (label, url) => h('div.cell.link', { tabindex: '0', role: 'button', on: { click: () => PageViewer.open(url, { platform: label === 'Modrinth' ? 'modrinth' : 'curseforge', title: modTitle(m) }), keydown: (e) => { if (e.key === 'Enter') e.currentTarget.click(); } } }, h('span.plat', { class: label === 'Modrinth' ? 'mr' : 'cf' }, label), h('span.v.muted', url.replace(/^https:\/\/(www\.)?/, '')), icon('external'));
-            const platformGroup = (pl, label) => m.ids[pl] ? [
+            const platformGroup = (pl, label) => m.ids[pl] && !m.manual?.[pl] ? [
                 h('div.group-title', label),
                 h('div.group',
                     cell('File', m.installedFiles?.[pl]),
@@ -582,6 +618,49 @@
                     snap.missing[k]?.includes(pl) ? h('div.cell', h('span.chip.amber', icon('warn'), 'File Missing on Disk')) : null)
             ] : null;
             const meta = (patch) => call('packs:mod-meta', { path, keys: [k], patch }).catch(UI.Island.error);
+            const btn = (label, onClick, cls = '') => h(`button.btn.sm${cls}`, { on: { click: onClick } }, label);
+            const useFile = (pl, source) => call('packs:manual-file', { path, key: k, platform: pl, source })
+                .then(r => { if (r) UI.Island.toast(`${PL_NAME[pl]} File Added`, modTitle(m)); }).catch(UI.Island.error);
+            const manualGroup = (pl) => {
+                const label = PL_NAME[pl], o = pl === 'modrinth' ? 'curseforge' : 'modrinth';
+                const st = sideState(m, pl);
+                const r = m.manual?.[pl];
+                if (st === 'platform' || isLocal(m)) return null;
+                if (st === 'pending') return [h('div.group-title', label), h('div.group',
+                    h('div.cell.col', h('div.t', 'Download Needed'), h('div.d', `The author doesn’t allow apps to download this mod. Download ${r.expectedFile} from CurseForge, then choose that file here.`)),
+                    h('div.cell.btns', btn('Open Download Page', () => call('shell:open', { url: r.page }).catch(UI.Island.error)), btn('Choose Downloaded File…', () => useFile(pl, 'file'), '.primary')))];
+                if (st === 'manual') {
+                    const from = PL_NAME[r.from];
+                    const old = copyOutdated(m, pl);
+                    const update = async () => {
+                        if (!(await UI.confirm({ title: `Update the ${label} Copy?`, message: `Copies ${old.now} from ${from} into the ${label} edition. Only do this once that version is fine to ship on ${label}: exports bundle the file inside the pack.`, confirmLabel: 'Update Copy' }))) return;
+                        useFile(pl, 'copy');
+                    };
+                    const remove = async () => {
+                        if (!(await UI.confirm({ title: `Remove the ${label} File?`, message: r.from === 'download' ? 'The mod goes back to waiting for its CurseForge download.' : `The ${label} edition of the pack leaves this mod out again.`, confirmLabel: 'Remove', danger: true }))) return;
+                        call('packs:manual-remove', { path, key: k, platform: pl }).catch(UI.Island.error);
+                    };
+                    return [h('div.group-title', `${label} · Added by Hand`), h('div.group',
+                        cell('File', m.installedFiles?.[pl]),
+                        cell('Source', from ? `Copied from ${from}` : r.from === 'download' ? 'Downloaded from CurseForge' : 'Chosen by hand'),
+                        cell('Version', r.version),
+                        snap.manualMissing?.[k]?.includes(pl) ? h('div.cell', h('span.chip.amber', icon('warn'), 'File Missing on Disk')) : null,
+                        r.from === 'download' && r.matches === false ? h('div.cell.col', h('div.d', 'This isn’t the exact file CurseForge lists for this pack.')) : null,
+                        old ? h('div.cell.col', h('div.t', `${from} Has a Newer File`), h('div.d', `${old.was} → ${old.now}. The copy stays as it is until you update it.`)) : null,
+                        h('div.cell.btns',
+                            old ? btn(`Update from ${from}`, update, '.green') : null,
+                            btn('Replace with a File…', () => useFile(pl, 'file')),
+                            btn('Remove', remove, '.danger')))];
+                }
+                if (!m.installedFiles?.[o]) return null;
+                return [h('div.group-title', label), h('div.group',
+                    h('div.cell.col', h('div.t', `Not on ${label}`), h('div.d', `The ${label} edition of the pack leaves this mod out. Add a file by hand to include it; exports bundle it inside the pack.`)),
+                    h('div.cell.btns', btn(`Use the ${PL_NAME[o]} File`, () => useFile(pl, 'copy'), '.primary'), btn('Choose a File…', () => useFile(pl, 'file'))))];
+            };
+            const localGroup = () => isLocal(m) ? [h('div.group-title', 'Local File'), h('div.group',
+                cell('File', m.installedFiles?.modrinth || m.installedFiles?.curseforge),
+                cell('Version', m.manual?.modrinth?.version || m.manual?.curseforge?.version),
+                h('div.cell.col', h('div.d', 'Not on Modrinth or CurseForge. Both editions use this file, and exports bundle it inside the pack.')))] : null;
             const sideSel = h('select.field', { style: { width: '170px', height: '34px' } },
                 h('option', { value: '' }, 'Automatic'), h('option', { value: 'both' }, 'Client and Server'), h('option', { value: 'client' }, 'Client Only'), h('option', { value: 'server' }, 'Server Only'));
             sideSel.value = m.side || '';
@@ -599,8 +678,8 @@
                         h('p', m.summary || ''),
                         h('div.inspector-chips',
                             Lib.typeOf(m).id !== 'mod' ? h('span.chip', icon(Lib.typeOf(m).icon), Lib.typeOf(m).one) : null,
-                            m.ids.modrinth ? h('span.chip', h('span.plat.mr', 'Modrinth')) : null,
-                            m.ids.curseforge ? h('span.chip', h('span.plat.cf', 'CurseForge')) : null,
+                            sideState(m, 'modrinth') ? h('span.chip', { title: sidesTitle(m) }, h('span.plat.mr', sideState(m, 'modrinth') === 'platform' ? 'Modrinth' : 'Modrinth (by Hand)')) : null,
+                            sideState(m, 'curseforge') ? h('span.chip', { title: sidesTitle(m) }, h('span.plat.cf', sideState(m, 'curseforge') === 'platform' ? 'CurseForge' : 'CurseForge (by Hand)')) : null,
                             h('span.chip', icon('monitor'), side.client ? 'Client' : 'No Client'),
                             h('span.chip', icon('server'), side.server ? 'Server' : 'No Server'),
                             m.pinned ? h('span.chip.accent', icon('pin'), 'Pinned') : null)),
@@ -620,10 +699,13 @@
                         h('div.cell', h('span.grow', h('div.t', 'Optional'), h('div.d', 'Players can turn it off when installing the pack.')), UI.toggle(!!m.optional, (v) => meta({ optional: v }))),
                         h('div.cell', h('span.grow', h('div.t', 'Runs On'), h('div.d', 'Decides which exports include it.')), sideSel),
                         h('div.cell.col', h('div.t', 'Notes'), notes),
-                        h('div.cell.link', { tabindex: '0', on: { click: () => Versions.open(snap, m) } }, icon('history'), h('span.grow', 'Change Version…'), icon('chev')),
-                        h('div.cell.link', { tabindex: '0', on: { click: () => linkEntry(snap, m) } }, icon('link'), h('span.grow', 'Link Platforms…'), icon('chev'))),
+                        isLocal(m) ? null : h('div.cell.link', { tabindex: '0', on: { click: () => Versions.open(snap, m) } }, icon('history'), h('span.grow', 'Change Version…'), icon('chev')),
+                        isLocal(m) ? null : h('div.cell.link', { tabindex: '0', on: { click: () => linkEntry(snap, m) } }, icon('link'), h('span.grow', 'Link Platforms…'), icon('chev'))),
+                    localGroup(),
                     platformGroup('modrinth', 'Modrinth'),
+                    manualGroup('modrinth'),
                     platformGroup('curseforge', 'CurseForge'),
+                    manualGroup('curseforge'),
                     bundled.length ? [h('div.group-title', `Bundled Inside (${bundled.length})`),
                         h('div.group', bundled.slice(0, 30).map(b => h('div.cell', h('span.k.ellipsis', b.name || b.id), h('span.v.mono', b.version || ''))))] : null,
                     h('div.group-title', 'Links'),
@@ -632,7 +714,7 @@
                         m.links?.curseforge ? linkCell('CurseForge', m.links.curseforge) : null),
                     h('div.group', cell('Added', m.dateAdded ? new Date(m.dateAdded).toLocaleDateString(undefined, { dateStyle: 'medium' }) : null), m.updatedAt ? cell('Updated', fmt.ago(m.updatedAt)) : null),
                     h('div.inspector-actions',
-                        h('button.btn', { on: { click: () => call('packs:redownload', { path, keys: [k] }).catch(UI.Island.error) } }, icon('download'), 'Download Again'),
+                        isLocal(m) ? null : h('button.btn', { on: { click: () => call('packs:redownload', { path, keys: [k] }).catch(UI.Island.error) } }, icon('download'), 'Download Again'),
                         h('button.btn.danger', { on: { click: async () => {
                             if (!(await UI.confirm({ title: `Remove ${modTitle(m)}?`, message: 'Its files are deleted from both platform folders of this pack.', confirmLabel: 'Remove', danger: true }))) return;
                             await call('packs:remove', { path, keys: [k] }).catch(UI.Island.error);

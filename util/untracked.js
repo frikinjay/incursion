@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const api = require('./api');
 const storage = require('./storage');
-const { cfFingerprint } = require('./jars');
+const { cfFingerprint, inspectJar } = require('./jars');
 
 const PLATFORMS = ['modrinth', 'curseforge'];
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -72,8 +72,16 @@ async function review(packPath, meta) {
             if (j) local[pl] = { name: j.name, size: j.size, sha1: j.sha1, version: pl === 'modrinth' ? j.mr : null, file: pl === 'curseforge' ? j.cf?.file : null };
         }
         const any = g.jars[0];
-        const tracked = meta.mods.find(m =>
+        let tracked = meta.mods.find(m =>
             (g.ids.curseforge && Number(m.ids.curseforge) === g.ids.curseforge) || (g.ids.modrinth && m.ids.modrinth === g.ids.modrinth));
+        let jarIds = [];
+        if (!tracked && g.jars.length === 1) {
+            const d = await inspectJar(path.join(storage.paths.modsDir(packPath, any.platform), any.name)).catch(() => null);
+            jarIds = (d?.ids || []).filter(i => !i.provided).map(i => i.id.toLowerCase());
+            tracked = jarIds.length ? meta.mods.find(m => !m.installedFiles?.[any.platform] && (m.contents?.ids || []).some(i => !i.provided && jarIds.includes(String(i.id).toLowerCase()))) : null;
+        }
+        // A jar for a mod the pack has, in the folder of the platform that lacks it: a hand-added file.
+        const fillsGap = tracked && g.jars.length === 1 && !tracked.installedFiles?.[any.platform];
         const item = {
             id: `${g.ids.modrinth || '-'}|${g.ids.curseforge || '-'}|${g.jars.map(j => j.sha1).join(',')}`,
             title: project?.title || cfMod?.name || any.name.replace(/\.jar$/i, ''),
@@ -83,7 +91,8 @@ async function review(packPath, meta) {
             files: g.jars.map(j => ({ platform: j.platform, name: j.name })),
             trackedKey: tracked ? api.modKey(tracked) : null
         };
-        if (tracked) item.plan = 'stray';
+        if (fillsGap) { item.plan = 'manual'; item.platform = any.platform; item.title = tracked.names?.curseforge || tracked.names?.modrinth || item.title; }
+        else if (tracked) item.plan = 'stray';
         else if (!g.ids.modrinth && !g.ids.curseforge) item.plan = 'unknown';
         else if (local.modrinth && local.curseforge) item.plan = 'link';
         else {
@@ -132,7 +141,7 @@ async function adopt(packPath, meta, items, choices) {
             }
             if (file) parts.curseforge = { mod: (await api.cfMods([item.ids.curseforge])).get(Number(item.ids.curseforge)), file };
             else if (item.ids.curseforge) parts.curseforge = (await api.resolve({ platforms: { curseforge: { id: item.ids.curseforge } }, gameVersion: meta.gameVersion, loader: meta.loader, want: 'curseforge' })).curseforge;
-            if (parts.curseforge && !parts.curseforge.mod) parts.curseforge = null;
+            if (parts.curseforge && (!parts.curseforge.mod || parts.curseforge.blocked)) parts.curseforge = null;
         }
         if (!parts.modrinth && !parts.curseforge) continue;
         const entry = api.toEntry(parts, { title: item.title });

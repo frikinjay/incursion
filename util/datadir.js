@@ -7,7 +7,19 @@ let custom = null;
 function defaultRoot() {
     const base = process.platform === 'win32' ? process.env.APPDATA
         : process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support') : os.homedir();
-    return path.join(base, process.platform === 'darwin' ? 'incursion' : '.incursion');
+    return path.join(base, '.incursion');
+}
+
+// Older versions used "incursion" on macOS. On case-insensitive disks that is also the app's own profile folder, so the
+// game files stay where they are instead of being moved out of it.
+function legacyRoot() {
+    return process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support', 'incursion') : null;
+}
+
+const GAME_FOLDERS = ['versions', 'libraries', 'assets', 'java', 'runtime'];
+async function hasGameFiles(dir) {
+    for (const name of GAME_FOLDERS) if (await fs.pathExists(path.join(dir, name))) return true;
+    return false;
 }
 
 const get = () => custom || defaultRoot();
@@ -20,8 +32,7 @@ async function inspect(dir) {
     const stat = await fs.stat(abs);
     if (!stat.isDirectory()) throw Object.assign(new Error('That is a file, not a folder.'), { code: 'NOT_A_FOLDER' });
     const names = await fs.readdir(abs);
-    const ours = ['versions', 'libraries', 'assets', 'java', 'runtime'];
-    return { path: abs, exists: true, empty: names.length === 0, incursion: names.some(n => ours.includes(n)), entries: names.length };
+    return { path: abs, exists: true, empty: names.length === 0, incursion: names.some(n => GAME_FOLDERS.includes(n)), entries: names.length };
 }
 
 // Never overwrites anything already in `to`. Returns the names that were skipped.
@@ -42,4 +53,4 @@ async function moveContents(from, to, onProgress) {
     return skipped;
 }
 
-module.exports = { defaultRoot, get, set, isDefault, inspect, moveContents };
+module.exports = { defaultRoot, legacyRoot, hasGameFiles, get, set, isDefault, inspect, moveContents };

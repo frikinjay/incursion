@@ -162,7 +162,7 @@ async function analyseCrash(inst, meta) {
         logsPath: path.join(inst.gameDir || '', 'logs', 'latest.log'),
         since: inst.startedAt, consoleLines: inst.lines.map(l => l.text)
     });
-    const result = crashTools.analyse(texts, meta.mods, (m) => String(m.ids.curseforge || m.ids.modrinth));
+    const result = crashTools.analyse(texts, meta.mods, (m) => String(m.ids.curseforge || m.ids.modrinth || m.ids.local));
     inst.crash = { ...c, analysis: result };
     if (result.suspects[0]) inst.log(`Likely cause: ${result.suspects[0].title} (${result.suspects[0].reasons[0]})`, 'error');
     inst.set({});

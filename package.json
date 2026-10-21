@@ -1,6 +1,6 @@
 {
   "name": "incursion",
-  "version": "2.6.0",
+  "version": "2.8.0",
   "main": "main.js",
   "incursion": {
     "cfService": "https://incursion-cf.www-aipt.workers.dev",
@@ -26,7 +26,15 @@
       "icon": "build/icon.ico"
     },
     "mac": {
-      "target": "dmg"
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.games"
     },
     "linux": {
       "target": [
@@ -34,7 +42,7 @@
         "deb"
       ],
       "category": "Game",
-      "maintainer": "Incursion contributors",
+      "maintainer": "frikinjay",
       "synopsis": "Minecraft modpack builder for CurseForge and Modrinth",
       "syncDesktopName": true
     },
@@ -49,11 +57,41 @@
       "renderer/**",
       "util/**",
       "package.json"
-    ]
+    ],
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createStartMenuShortcut": false,
+      "createDesktopShortcut": false,
+      "shortcutName": "Incursion",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp",
+      "include": "build/installer.nsh"
+    },
+    "copyright": "Copyright © 2026 frikinjay",
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "resetAdHocDarwinSignature": true
+    }
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": {
+    "name": "frikinjay",
+    "url": "https://github.com/frikinjay"
+  },
+  "license": "AGPL-3.0-only",
   "description": "Build Minecraft modpacks for CurseForge and Modrinth at the same time.",
   "homepage": "https://github.com/frikinjay/incursion",
   "repository": {

@@ -94,13 +94,13 @@ async function publish({ meta, tokens, targets, release, serverPack = null, dryR
             onProgress(target, 0.1);
             if (target === 'modrinth') {
                 if (!p.modrinthProjectId) throw new Error('Set the Modrinth project in the publish settings.');
-                const { path: file } = await storage.exportModrinth({ ...meta, version: release.version }, tmp);
+                const { path: file, bundled } = await storage.exportModrinth({ ...meta, version: release.version }, tmp);
                 const data = {
                     project_id: p.modrinthProjectId, name, version_number: release.version, changelog: release.changelog,
                     dependencies: [], game_versions: [meta.gameVersion], version_type: release.versionType || 'release',
                     loaders: [l.mr], featured: true, status: 'listed', file_parts: ['pack'], primary_file: 'pack'
                 };
-                if (dryRun) { results.modrinth = { dryRun: true, data, file: path.basename(file), size: (await fs.stat(file)).size }; }
+                if (dryRun) { results.modrinth = { dryRun: true, data, file: path.basename(file), size: (await fs.stat(file)).size, bundled }; }
                 else {
                     const form = new FormData();
                     form.append('data', JSON.stringify(data));
@@ -113,9 +113,9 @@ async function publish({ meta, tokens, targets, release, serverPack = null, dryR
                 if (!p.curseforgeProjectId) throw new Error('Set the CurseForge project in the publish settings.');
                 const gameVersions = await cfGameVersionIds(meta.gameVersion, tokens.curseforgeUpload);
                 if (!gameVersions.length) throw new Error(`CurseForge doesn't list Minecraft ${meta.gameVersion}.`);
-                const { path: file } = await storage.exportCurseForge({ ...meta, version: release.version }, tmp);
+                const { path: file, bundled } = await storage.exportCurseForge({ ...meta, version: release.version }, tmp);
                 const metadata = { changelog: release.changelog, changelogType: 'markdown', displayName: name, gameVersions, releaseType: release.versionType || 'release' };
-                if (dryRun) { results.curseforge = { dryRun: true, metadata, file: path.basename(file), size: (await fs.stat(file)).size }; }
+                if (dryRun) { results.curseforge = { dryRun: true, metadata, file: path.basename(file), size: (await fs.stat(file)).size, bundled }; }
                 else {
                     const form = new FormData();
                     form.append('metadata', JSON.stringify(metadata));

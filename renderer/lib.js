@@ -103,7 +103,7 @@
     };
 
     const LOADERS = { fabric: 'Fabric', quilt: 'Quilt', forge: 'Forge', neoforge: 'NeoForge' };
-    const modKey = (m) => String(m.ids.curseforge || m.ids.modrinth);
+    const modKey = (m) => String(m.ids.curseforge || m.ids.modrinth || m.ids.local);
     const modTitle = (m) => m.names?.curseforge || m.names?.modrinth || 'Unknown Mod';
     const modIcon = (m) => m.icons?.modrinth || m.icons?.curseforge || null;
 

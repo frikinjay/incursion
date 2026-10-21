@@ -88,7 +88,17 @@ async function exportPackwiz(meta, outDir, onProgress = () => {}) {
         const t = content.typeOf(m);
         const mr = m.ids.modrinth && m.installedFiles?.modrinth && m.fileLinks?.modrinth;
         const cf = m.ids.curseforge && m.installedFiles?.curseforge && m.meta?.cfFileId;
-        if (!mr && !cf) { skipped.push(m.names.modrinth || m.names.curseforge); continue; }
+        if (!mr && !cf) {
+            // No platform to download it from: the file itself goes into the pack.
+            const own = await pickFile(meta, m);
+            if (!own) { skipped.push(m.names.modrinth || m.names.curseforge); continue; }
+            const rel = `${t.folder}/${own.name}`;
+            const buf = await fs.readFile(own.file);
+            await fs.outputFile(path.join(dir, rel), buf);
+            index.push({ file: rel, hash: sha256(buf) });
+            onProgress(Math.round((++n / meta.mods.length) * 80));
+            continue;
+        }
         const side = storage.sideOf(m);
         const lines = [
             `name = ${tomlStr(m.names.modrinth || m.names.curseforge)}`,
