@@ -74,9 +74,15 @@ function slimCfFile(f) {
         env: { client: hasSide ? gv.includes('Client') : true, server: hasSide ? gv.includes('Server') : true },
         deps: (f.dependencies || []).filter(d => d.relationType === 3).map(d => d.modId),
         incompat: (f.dependencies || []).filter(d => d.relationType === 5).map(d => d.modId),
-        gameVersions: gv.filter(v => /^\d/.test(v))
+        gameVersions: gv.filter(v => /^\d/.test(v)),
+        // CurseForge mixes loaders into the version list ("NeoForge", "Fabric"); sides and Java versions aren't loaders.
+        loaders: gv.filter(v => !/^\d/.test(v) && !/^(client|server|java \d+)$/i.test(v)).map(v => v.toLowerCase())
     };
 }
+
+// What an installed file was published for, kept per platform so the mod list can flag a file that doesn't match the
+// pack's Minecraft version or loader.
+const targetOf = (f) => (f && (f.gameVersions || f.loaders) ? { gameVersions: f.gameVersions || [], loaders: f.loaders || [] } : null);
 
 function slimMrHit(h) {
     return {
@@ -324,6 +330,7 @@ const api = {
             deps: { curseforge: c ? c.file.deps : [], modrinth: m ? m.version.deps : [] },
             incompat: { curseforge: c ? c.file.incompat : [], modrinth: m ? m.version.incompat : [] },
             meta: { cfFileId: c ? c.file.id : null, mrVersionId: m ? m.version.id : null, mrVersionNumber: m ? m.version.number : null, mrDate: m ? m.version.date : null, cfDisplayName: c ? c.file.displayName : null },
+            targets: { curseforge: c ? targetOf(c.file) : null, modrinth: m ? targetOf(m.version) : null },
             summary: (c && c.mod.summary) || (m && m.project?.summary) || hint.summary || '',
             dateAdded: Date.now()
         };
@@ -331,14 +338,19 @@ const api = {
 
     // Always bypasses the cache: this is the one place stale data isn't acceptable. Returns only the platforms that
     // changed.
-    async checkUpdates({ mods, gameVersion, loader, hashOf }, onProgress = () => {}) {
+    //
+    // retarget is for moving a pack to another Minecraft version: any different file counts (older ones too), and
+    // `missing` lists the platforms with no usable file for that version. skip(mod, platform) leaves a platform out.
+    async checkUpdates({ mods, gameVersion, loader, hashOf, retarget = false, skip = () => false }, onProgress = () => {}) {
         const l = loaderInfo(loader);
         const updates = {};
+        const missing = {};
         const put = (mod, platform, patch) => { (updates[modKey(mod)] ||= {})[platform] = patch; };
+        const lack = (mod, platform) => { (missing[modKey(mod)] ||= []).push(platform); };
         const errors = [];
 
-        const mrMods = mods.filter(m => m.ids.modrinth);
-        const cfModsList = mods.filter(m => m.ids.curseforge);
+        const mrMods = mods.filter(m => m.ids.modrinth && !skip(m, 'modrinth'));
+        const cfModsList = mods.filter(m => m.ids.curseforge && !skip(m, 'curseforge'));
         let done = 0;
         const total = (mrMods.length ? 1 : 0) + (cfModsList.length ? 1 : 0);
         const tick = () => onProgress(Math.round((++done / Math.max(total, 1)) * 100));
@@ -358,7 +370,16 @@ const api = {
                         }));
                     }
                 }
-                const fallback = hashed.filter(x => !x.sha1 || !byHash[x.sha1]);
+                // Moving versions, most files have nothing for the target. A file Modrinth knows needs no slower per-mod
+                // lookup to prove that, so only unknown files fall back.
+                let known = new Set();
+                if (retarget) {
+                    for (const part of chunk(withHash.filter(x => !byHash[x.sha1]), 500)) {
+                        const res = await mr('/version_files', { method: 'POST', body: { hashes: part.map(x => x.sha1), algorithm: 'sha1' } });
+                        for (const h of Object.keys(res || {})) known.add(h);
+                    }
+                }
+                const fallback = hashed.filter(x => !x.sha1 || (!byHash[x.sha1] && !known.has(x.sha1)));
                 const fallbackVersions = await mapPool(fallback, 6, async x => {
                     try { return pickMrVersion(await mrVersionsFor(x.m.ids.modrinth, gameVersion, l.id, { force: true, type: x.m.type })); }
                     catch { return null; }
@@ -366,16 +387,17 @@ const api = {
                 const latestFor = new Map();
                 for (const x of withHash) if (byHash[x.sha1]) latestFor.set(x.m, slimMrVersion(byHash[x.sha1]));
                 fallback.forEach((x, i) => { if (fallbackVersions[i]) latestFor.set(x.m, fallbackVersions[i]); });
+                if (retarget) for (const m of mrMods) if (!latestFor.has(m)) lack(m, 'modrinth');
 
                 for (const [m, v] of latestFor) {
                     const current = m.meta?.mrVersionId;
                     const changed = current ? v.id !== current : v.fileName !== m.installedFiles.modrinth;
                     if (!changed) continue;
                     // Ignore "updates" older than what's installed (e.g. a beta installed, newest release is older).
-                    if (m.meta?.mrDate && v.date && new Date(v.date) < new Date(m.meta.mrDate)) continue;
+                    if (!retarget && m.meta?.mrDate && v.date && new Date(v.date) < new Date(m.meta.mrDate)) continue;
                     put(m, 'modrinth', {
                         fileName: v.fileName, url: v.url, versionId: v.id, versionNumber: v.number, date: v.date,
-                        sha1: v.sha1, sha512: v.sha512, size: v.size, deps: v.deps,
+                        sha1: v.sha1, sha512: v.sha512, size: v.size, deps: v.deps, target: targetOf(v),
                         from: m.meta?.mrVersionNumber || m.installedFiles.modrinth
                     });
                 }
@@ -391,31 +413,33 @@ const api = {
                 for (const m of cfModsList) {
                     const cm = fresh.get(Number(m.ids.curseforge));
                     const idx = cm && pickCfIndex(cm, gameVersion, l.cf, m.type);
-                    if (!idx) { if (cm) noIndex.push(m); continue; }
+                    if (!idx) { if (cm) noIndex.push(m); else if (retarget) lack(m, 'curseforge'); continue; }
                     const current = Number(m.meta?.cfFileId) || 0;
-                    const changed = current ? idx.fileId > current : idx.filename !== m.installedFiles.curseforge;
+                    const changed = current ? (retarget ? idx.fileId !== current : idx.fileId > current) : idx.filename !== m.installedFiles.curseforge;
                     if (changed) candidates.push({ m, idx });
                 }
                 await mapPool(noIndex, 4, async (m) => {
                     const f = await cfLatestFile(m.ids.curseforge, gameVersion, loader, m.type, { force: true }).catch(() => null);
                     const current = Number(m.meta?.cfFileId) || 0;
-                    if (f && (current ? f.id > current : f.fileName !== m.installedFiles.curseforge)) candidates.push({ m, idx: { fileId: f.id, filename: f.fileName } });
+                    if (!f) { if (retarget) lack(m, 'curseforge'); return; }
+                    if (current ? (retarget ? f.id !== current : f.id > current) : f.fileName !== m.installedFiles.curseforge) candidates.push({ m, idx: { fileId: f.id, filename: f.fileName } });
                 });
                 const files = await cfFiles(candidates.map(c => c.idx.fileId));
                 for (const { m, idx } of candidates) {
                     const f = files.get(idx.fileId);
-                    if (!f || !f.url) continue;
+                    // A file its author keeps out of apps can't be fetched, so for a move it counts as missing.
+                    if (!f || !f.url) { if (retarget) lack(m, 'curseforge'); continue; }
                     put(m, 'curseforge', {
                         fileName: f.fileName, url: f.url, fileId: f.id, displayName: f.displayName, date: f.date,
-                        sha1: f.sha1, size: f.size, deps: f.deps, env: f.env,
+                        sha1: f.sha1, size: f.size, deps: f.deps, env: f.env, target: targetOf(f),
                         from: m.meta?.cfDisplayName || m.installedFiles.curseforge
                     });
                 }
             } catch (err) { errors.push(`CurseForge: ${err.message}`); }
             tick();
-        }
+        } else if (cfModsList.length && retarget) errors.push('CurseForge: add a CurseForge API key in Settings to move CurseForge files');
 
-        return { updates, errors, checkedAt: Date.now() };
+        return { updates, missing, errors, checkedAt: Date.now() };
     },
 
     async syncMetadata({ mods, force = false, hashOf = null }) {
@@ -438,11 +462,11 @@ const api = {
             } catch {}
         }));
 
-        const legacyCf = mods.filter(m => m.meta?.cfFileId && (!m.meta.cfDisplayName || !m.incompat));
+        const legacyCf = mods.filter(m => m.meta?.cfFileId && !m.manual?.curseforge && (!m.meta.cfDisplayName || !m.incompat || !m.targets?.curseforge));
         const cfInstalled = legacyCf.length && hasCf() ? await cfFiles(legacyCf.map(m => m.meta.cfFileId)).catch(() => new Map()) : new Map();
         const mrInstalled = new Map();
         if (hashOf) {
-            const legacyMr = mods.filter(m => m.ids.modrinth && (!m.meta?.mrVersionNumber || !m.incompat));
+            const legacyMr = mods.filter(m => m.ids.modrinth && !m.manual?.modrinth && (!m.meta?.mrVersionNumber || !m.incompat || !m.targets?.modrinth));
             const hashes = (await mapPool(legacyMr, 8, async m => [m, await hashOf(m)])).filter(([, h]) => h);
             for (const part of chunk(hashes, 500)) {
                 try {
@@ -489,6 +513,7 @@ const api = {
                 (mod.deps ||= {}).curseforge = cfFile.deps;
                 (mod.incompat ||= {}).curseforge = cfFile.incompat;
                 mod.environments.curseforge = cfFile.env;
+                (mod.targets ||= {}).curseforge = targetOf(cfFile);
             }
             const mrVer = mrInstalled.get(mod);
             if (mrVer) {
@@ -498,6 +523,7 @@ const api = {
                 (mod.hashes ||= {}).modrinth = { sha1: mrVer.sha1, sha512: mrVer.sha512 };
                 (mod.deps ||= {}).modrinth = mrVer.deps;
                 (mod.incompat ||= {}).modrinth = mrVer.incompat;
+                (mod.targets ||= {}).modrinth = targetOf(mrVer);
             }
             if (JSON.stringify(mod) !== before) changed++;
         }
@@ -1147,6 +1173,7 @@ async function cfLatestFile(modId, gameVersion, loader, type = 'mod', { force = 
 function modKey(m) { return String(m.ids.curseforge || m.ids.modrinth || m.ids.local); }
 
 api.modKey = modKey;
+api.targetOf = targetOf;
 api.pickCfIndex = pickCfIndex;
 api.slimCfMod = slimCfMod;
 api.matching = { sameProject, linkedCfSlug };

@@ -1,10 +1,12 @@
 (() => {
-    const { h, img, icon, call, LOADERS } = Lib;
+    const { h, img, icon, call, fmt, LOADERS } = Lib;
 
     function open({ mode, snapshot }) {
         const edit = mode === 'edit';
         const meta = edit ? snapshot.meta : {};
-        const locked = edit && meta.mods.length > 0;   // version / loader can't change under existing mods
+        // Every file in a pack is built for one loader, so the loader is fixed once there's content. The Minecraft version
+        // can still change: the mods move to their files for the new version (packs.retarget).
+        const hasContent = edit && meta.mods.length > 0;
         let iconData = meta.icon || null;
         let folder = '';
 
@@ -14,7 +16,7 @@
         const desc = h('textarea.field', { placeholder: 'What is this pack about?' });
         desc.value = meta.description || '';
         const gameSel = h('select.field', { disabled: true }, h('option', 'Loading…'));
-        const loaderSel = h('select.field', { disabled: locked }, Object.entries(LOADERS).map(([v, l]) => h('option', { value: v }, l)));
+        const loaderSel = h('select.field', { disabled: hasContent }, Object.entries(LOADERS).map(([v, l]) => h('option', { value: v }, l)));
         loaderSel.value = meta.loader || 'fabric';
         const loaderVerSel = h('select.field', { disabled: true }, h('option', 'Loading…'));
         const folderField = h('input.field', { readonly: true, placeholder: 'Choose where the pack is stored' });
@@ -29,7 +31,7 @@
                 gameSel.replaceChildren(...versions.map(v => h('option', { value: v }, v)));
                 gameSel.value = meta.gameVersion && versions.includes(meta.gameVersion) ? meta.gameVersion : versions[0];
                 if (meta.gameVersion && !versions.includes(meta.gameVersion)) { gameSel.prepend(h('option', { value: meta.gameVersion }, meta.gameVersion)); gameSel.value = meta.gameVersion; }
-                gameSel.disabled = locked;
+                gameSel.disabled = false;
                 loadLoaderVersions();
             } catch (e) {
                 gameSel.replaceChildren(h('option', 'Couldn’t Load Versions'));
@@ -59,6 +61,12 @@
                 showErr(`Couldn't load loader versions: ${e.message}`);
             }
         }
+        const moveNote = h('p.hint.full.hidden', { style: { marginTop: '-6px' } });
+        gameSel.addEventListener('change', () => {
+            const moving = hasContent && gameSel.value !== meta.gameVersion;
+            moveNote.textContent = moving ? `Every mod moves to its file for Minecraft ${gameSel.value}. You’ll see which ones have none before anything changes.` : '';
+            moveNote.classList.toggle('hidden', !moving);
+        });
         gameSel.addEventListener('change', loadLoaderVersions);
         loaderSel.addEventListener('change', loadLoaderVersions);
 
@@ -74,6 +82,7 @@
             if (!edit && !folder) return showErr('Choose a folder for the pack.');
             save.disabled = true;
             try {
+                if (edit && hasContent && fields.gameVersion !== meta.gameVersion) return await move(fields);
                 if (edit) {
                     await call('packs:info', { path: meta.path, fields });
                     UI.Island.toast('Changes Saved', fields.name);
@@ -88,6 +97,30 @@
                 }
             } catch (e) { showErr(e.message); save.disabled = false; }
         });
+
+        const listOf = (names, max = 6) => (names.length > max ? `${names.slice(0, max).join(', ')} and ${names.length - max} more` : names.join(', '));
+
+        // Shows what a version change would do, then saves the other fields and moves the pack in the background.
+        async function move(fields) {
+            const label = save.textContent;
+            save.textContent = 'Checking Mods…';
+            try {
+                const plan = await call('packs:retarget', { path: meta.path, gameVersion: fields.gameVersion, loaderVersion: fields.loaderVersion, dryRun: true });
+                const v = plan.gameVersion;
+                const parts = [`${fmt.plural(plan.moving, 'mod')} will switch to ${plan.moving === 1 ? 'its' : 'their'} Minecraft ${v} files${plan.unchanged ? ` (${plan.unchanged} already work)` : ''}, with ${LOADERS[meta.loader]} ${plan.loaderVersion}.`];
+                if (plan.missing.length) parts.push(`${fmt.plural(plan.missing.length, 'mod')} ${plan.missing.length === 1 ? 'has' : 'have'} no ${v} file and will be turned off: ${listOf(plan.missing.map(m => m.title))}.`);
+                if (plan.handAdded.length) parts.push(`Files added by hand stay as they are, so check them yourself: ${listOf(plan.handAdded)}.`);
+                parts.push('Nothing changes if a download fails.');
+                const ok = await UI.confirm({ title: `Move ${meta.name} to Minecraft ${v}?`, message: parts.join(' '), confirmLabel: 'Move Pack' });
+                if (!ok) { save.textContent = label; save.disabled = false; return; }
+                const { gameVersion, loader, loaderVersion, ...rest } = fields;
+                await call('packs:info', { path: meta.path, fields: rest });
+                d.close();
+                call('packs:retarget', { path: meta.path, gameVersion, loaderVersion })
+                    .then(r => UI.Island.toast(`Moved to Minecraft ${r.gameVersion}`, r.missing.length ? `${fmt.plural(r.missing.length, 'mod')} turned off` : `${fmt.plural(r.moving, 'mod')} moved`))
+                    .catch(UI.Island.error);
+            } catch (e) { save.textContent = label; save.disabled = false; showErr(e.message); }
+        }
 
         const d = UI.dialog({
             content: [
@@ -109,7 +142,8 @@
                         h('div', h('label.label', 'Minecraft'), gameSel),
                         h('div', h('label.label', 'Loader'), loaderSel),
                         h('div.full', h('label.label', 'Loader Version'), loaderVerSel),
-                        locked ? h('p.hint.full', { style: { marginTop: '-6px' } }, 'The Minecraft version and loader can’t be changed once the pack has content.') : null,
+                        hasContent ? h('p.hint.full', { style: { marginTop: '-6px' } }, 'The loader can’t change once the pack has content.') : null,
+                        moveNote,
                         !edit ? h('div.full', h('label.label', 'Folder'), h('div.path-pick', folderField,
                             h('button.btn', { on: { click: async () => {
                                 const dir = await call('dialog:folder', { title: 'Choose a Folder for the Pack' });

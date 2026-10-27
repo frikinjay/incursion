@@ -114,6 +114,7 @@
 
     window.incursion.on(({ type, payload }) => {
         if (type === 'task') UI.Island.task(payload);
+        else if (type === 'downloads') UI.Downloads.update(payload.items);
         else if (type === 'pack') {
             snapshots.set(payload.meta.path, payload);
             const { route } = state.get();

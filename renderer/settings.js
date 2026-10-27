@@ -294,6 +294,9 @@
                 h('div.group',
                     h('div.cell', h('span.k', 'API cache'), cacheInfo, h('button.btn.sm', { on: { click: async () => { await call('cache:clear'); await refreshCache(); UI.Island.toast('Cache Cleared', 'Fresh data loads on next use.'); } } }, 'Clear'))),
                 h('p.hint', 'Search results refresh every 15 minutes. Update checks always use live data.'),
+                h('div.group',
+                    h('div.cell', h('span.grow', h('div.t', 'App Logs'), h('div.d', 'What Incursion did: downloads, updates, launches and errors. Include them when reporting a problem.')),
+                        h('button.btn.sm', { on: { click: () => call('app:logs').catch(UI.Island.error) } }, 'Open'))),
                 h('div.group', { style: { marginTop: '14px' } },
                     h('div.cell', img('icon.svg', 'avatar'), h('span.grow', h('div.t', `Incursion ${info.version || ''}`), h('div.d', 'Modpacks for CurseForge and Modrinth, built and played in one place.'))))));
 

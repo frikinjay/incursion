@@ -46,22 +46,32 @@
         return { from: r.from, was: r.version || r.sourceFile, now: (r.from === 'modrinth' ? m.meta?.mrVersionNumber : m.meta?.cfDisplayName) || now };
     }
     const isLocal = (m) => !m.ids.curseforge && !m.ids.modrinth && !!m.ids.local;
-    function sidesTitle(m) {
+    // Lines like "Modrinth: made for Minecraft 1.21.1" for each platform file that doesn't fit the pack.
+    const compatLines = (bad) => ['modrinth', 'curseforge'].filter(pl => bad?.[pl]).map(pl => `${PL_NAME[pl]}: ${bad[pl].map(r => r.text).join('; ')}`);
+    function sidesTitle(m, bad) {
         return ['modrinth', 'curseforge'].map(pl => {
             const st = sideState(m, pl);
+            if (bad?.[pl]) return `${PL_NAME[pl]}: doesn’t fit this pack (${bad[pl].map(r => r.text).join('; ')})`;
             if (st === 'platform') return PL_NAME[pl];
             if (st === 'pending') return `${PL_NAME[pl]}: download needed`;
             if (st === 'manual') return `${PL_NAME[pl]}: added by hand${PL_NAME[m.manual[pl].from] ? ` (copied from ${PL_NAME[m.manual[pl].from]})` : ''}`;
             return `Not on ${PL_NAME[pl]}`;
         }).join('\n');
     }
-    function twinMarks(m, upd) {
-        return h('span.twins', { title: upd ? updateSummary(m, upd) : sidesTitle(m) },
+    function twinMarks(m, upd, bad) {
+        return h('span.twins', { title: upd ? updateSummary(m, upd) : sidesTitle(m, bad) },
             ['modrinth', 'curseforge'].map(pl => {
                 const st = sideState(m, pl);
-                return h(`span.twin-slot${upd?.[pl] ? '.upd' : ''}${st === 'manual' ? '.manual' : ''}`,
+                return h(`span.twin-slot${upd?.[pl] ? '.upd' : ''}${st === 'manual' ? '.manual' : ''}${bad?.[pl] ? '.bad' : ''}`,
                     h(`span.twin.${pl === 'modrinth' ? 'mr' : 'cf'}${st === 'platform' || st === 'manual' ? '.on' : ''}${st === 'pending' ? '.pending' : ''}`));
             }));
+    }
+
+    // "Wrong Minecraft", "Wrong Loader" or "Needs Newer NeoForge"; "Incompatible" when several apply.
+    function incompatLabel(bad, loader) {
+        const kinds = new Set(Object.values(bad).flat().map(r => r.kind));
+        if (kinds.size > 1) return 'Incompatible';
+        return kinds.has('minecraft') ? 'Wrong Minecraft' : kinds.has('loader') ? 'Wrong Loader' : `Needs Other ${LOADERS[loader] || 'Loader'}`;
     }
 
     function updateSummary(m, upd) {
@@ -254,7 +264,8 @@
             { value: 'all', label: 'All' },
             { value: 'updates', label: 'Updates' },
             { value: 'missing', label: 'Missing' },
-            { value: 'pinned', label: 'Pinned' }
+            { value: 'pinned', label: 'Pinned' },
+            { value: 'incompatible', label: 'Incompatible' }
         ], ui.filter, (v) => { ui.filter = v; refilter(true); });
         const searchInput = h('input.field', { type: 'search', placeholder: 'Filter Content', spellcheck: false });
         searchInput.addEventListener('input', debounce(() => { ui.query = searchInput.value.trim().toLowerCase(); refilter(true); }, 90));
@@ -333,6 +344,7 @@
                 if (ui.filter === 'updates' && !snap.updates[k]) return false;
                 if (ui.filter === 'missing' && !snap.missing[k]) return false;
                 if (ui.filter === 'pinned' && !m.pinned) return false;
+                if (ui.filter === 'incompatible' && !snap.compat?.[k]) return false;
                 if (ui.type !== 'any' && Lib.typeOf(m).id !== ui.type) return false;
                 const cf = !!m.ids.curseforge, mr = !!m.ids.modrinth;
                 if (ui.platform === 'both' && !(cf && mr)) return false;
@@ -380,13 +392,14 @@
 
         const rowSig = (m) => {
             const k = modKey(m);
-            return `${m.meta?.mrVersionId}|${m.meta?.cfFileId}|${JSON.stringify(Object.entries(snap.updates[k] || {}).map(([pl, u]) => [pl, u.versionId || u.fileId]))}|${!!snap.missing[k]}|${modTitle(m)}|${modIcon(m)}|${m.pinned}|${m.side}|${!!m.disabled}|${selecting}|${selected.has(k)}`;
+            return `${m.meta?.mrVersionId}|${m.meta?.cfFileId}|${JSON.stringify(Object.entries(snap.updates[k] || {}).map(([pl, u]) => [pl, u.versionId || u.fileId]))}|${!!snap.missing[k]}|${modTitle(m)}|${modIcon(m)}|${m.pinned}|${m.side}|${!!m.disabled}|${selecting}|${selected.has(k)}|${JSON.stringify(snap.compat?.[k] || null)}`;
         };
 
         function buildRow(m) {
             const k = modKey(m);
             const upd = snap.updates[k];
             const miss = snap.missing[k];
+            const bad = snap.compat?.[k];
             const side = sideOf(m);
             const author = m.authors?.curseforge || m.authors?.modrinth;
             const pv = platformVersions(m, snap.meta.gameVersion);
@@ -417,7 +430,8 @@
             img(modIcon(m)),
             h('div', { style: { minWidth: 0 } },
                 h('div.name', h('span', modTitle(m)),
-                    twinMarks(m, upd),
+                    twinMarks(m, upd, bad),
+                    bad ? h('span.chip.sm.red', { title: `${compatLines(bad).join('\n')}\n\nUpdate it, choose another version in its details, or turn it off.` }, icon('warn'), incompatLabel(bad, snap.meta.loader)) : null,
                     !pv.same ? h('span.chip.sm.amber', { title: `Modrinth: ${pv.mr}\nCurseForge: ${pv.cf}` }, 'Versions Differ') : null,
                     Lib.typeOf(m).id !== 'mod' ? h('span.chip.sm', Lib.typeOf(m).one) : null,
                     m.pinned ? h('span.chip.sm.accent', { title: 'Pinned. Updates skip this item.' }, icon('pin'), 'Pinned') : null,
@@ -682,7 +696,8 @@
                             sideState(m, 'curseforge') ? h('span.chip', { title: sidesTitle(m) }, h('span.plat.cf', sideState(m, 'curseforge') === 'platform' ? 'CurseForge' : 'CurseForge (by Hand)')) : null,
                             h('span.chip', icon('monitor'), side.client ? 'Client' : 'No Client'),
                             h('span.chip', icon('server'), side.server ? 'Server' : 'No Server'),
-                            m.pinned ? h('span.chip.accent', icon('pin'), 'Pinned') : null)),
+                            m.pinned ? h('span.chip.accent', icon('pin'), 'Pinned') : null,
+                            ...compatLines(snap.compat?.[modKey(m)]).map(line => h('span.chip.red', { title: 'This file doesn’t fit the pack’s Minecraft version, loader or loader version. Update it, choose another version below, or turn it off.' }, icon('warn'), line)))),
                     upd ? h('div.update-note.stacked',
                         ...Object.entries(upd).map(([pl, u]) => h('div.update-line',
                             h(`span.plat.${pl === 'modrinth' ? 'mr' : 'cf'}`, PL_NAME[pl]),

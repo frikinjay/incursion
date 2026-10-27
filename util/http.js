@@ -3,6 +3,8 @@ const { version } = require('../package.json');
 
 const USER_AGENT = `Incursion/${version} (github.com/incursion-modpacks; modpack manager)`;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const log = require('./log').scope('http');
+const RETRY = Symbol('retry');
 
 class HttpError extends Error {
     constructor(status, url, body) {
@@ -102,7 +104,7 @@ function limiterFor(url) {
     return limiters.cdn;
 }
 
-async function request(url, { method = 'GET', headers = {}, body, as = 'json', timeout = 20000, retries = 3 } = {}) {
+async function request(url, { method = 'GET', headers = {}, body, as = 'json', timeout = 20000, retries = 3, stream = false } = {}) {
     const limiter = limiterFor(url);
     const init = {
         method,
@@ -114,25 +116,41 @@ async function request(url, { method = 'GET', headers = {}, body, as = 'json', t
 
     for (let attempt = 0; ; attempt++) {
         let res;
+        // With stream the timeout covers only the headers: the body can take as long as it takes, and the caller watches
+        // it for stalls. A plain 'response' keeps the timeout running over its body.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), timeout);
+        timer.unref?.();
         try {
-            res = await limiter.schedule(() => fetch(url, { ...init, signal: AbortSignal.timeout(timeout) }));
+            res = await limiter.schedule(() => fetch(url, { ...init, signal: ctrl.signal }));
+            if (stream) clearTimeout(timer);
         } catch (err) {
-            if (attempt >= retries) throw new Error(`Network error reaching ${new URL(url).host}: ${err.cause?.code || err.message}`);
+            clearTimeout(timer);
+            if (attempt >= retries) { log.warn(`${method} ${new URL(url).host}${new URL(url).pathname} failed: ${err.cause?.code || err.message}`); throw new Error(`Network error reaching ${new URL(url).host}: ${err.cause?.code || err.message}`); }
+            log.debug(`${method} ${new URL(url).host}: ${err.cause?.code || err.message}; retry ${attempt + 1}`);
             limiter.stats.retries++;
             await sleep(500 * 2 ** attempt);
             continue;
         }
+        try {
+            const out = await handleResponse(res, attempt);
+            if (out !== RETRY) return out;
+        } finally { if (as !== 'response' || stream) clearTimeout(timer); }
+    }
+
+    async function handleResponse(res, attempt) {
         limiter.observe(res.headers);
 
         if (res.status === 429 || res.status >= 500) {
-            if (attempt >= retries) throw new HttpError(res.status, url, await res.text().catch(() => ''));
+            if (attempt >= retries) { log.warn(`${method} ${new URL(url).host}${new URL(url).pathname}: HTTP ${res.status} after ${attempt + 1} tries`); throw new HttpError(res.status, url, await res.text().catch(() => '')); }
             const retryAfter = Number(res.headers.get('retry-after'));
             const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt;
             if (res.status === 429) limiter.pauseFor(wait);
             limiter.stats.retries++;
             await res.body?.cancel().catch(() => {});
+            log.debug(`${method} ${new URL(url).host}: HTTP ${res.status}; retry in ${wait} ms`);
             await sleep(wait);
-            continue;
+            return RETRY;
         }
         if (!res.ok) throw new HttpError(res.status, url, await res.text().catch(() => ''));
         if (as === 'response') return res;

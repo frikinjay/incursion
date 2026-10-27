@@ -3,12 +3,13 @@ const fs = require('fs-extra');
 const path = require('path');
 const crypto = require('crypto');
 const { pipeline } = require('stream/promises');
-const { Readable } = require('stream');
 const archiver = require('archiver');
 
 const META_FILE = 'incursion.json';
 const LEGACY_META_FILE = 'pack-metadata.json';
 const { request } = require('./http');
+const downloads = require('./downloads');
+const downloadLog = require('./log').scope('download');
 const { loaderInfo } = require('./loaders');
 
 let dirs = { userData: null };
@@ -200,28 +201,38 @@ const storage = {
         return missing;
     },
 
-    async download(url, dest, { sha1, onBytes } = {}) {
+    // onBytes gets each new byte count once, even when a stalled connection is resumed or restarted. name is what the
+    // downloads list shows (the file name by default).
+    async download(url, dest, { sha1, onBytes, name } = {}) {
         if (!/^https:\/\//.test(url || '')) throw new Error('Missing or insecure download URL');
         await fs.ensureDir(path.dirname(dest));
         const part = `${dest}.part`;
-        const res = await request(url, { as: 'response', timeout: 120000, headers: { Accept: '*/*' } });
-        const hash = crypto.createHash('sha1');
+        const label = name || path.basename(dest).replace(/\.disabled$/, '');
+        const dl = downloads.track(label, url);
+        let reported = 0;
         try {
-            await pipeline(
-                Readable.fromWeb(res.body),
-                async function* (src) { for await (const c of src) { hash.update(c); onBytes?.(c.length); yield c; } },
-                fs.createWriteStream(part)
-            );
-            // Flush before the rename so a sudden shutdown can't leave a truncated file under the final name.
-            const fh = await fs.promises.open(part, 'r+');
-            try { await fh.sync(); } finally { await fh.close(); }
-            const got = hash.digest('hex');
-            if (sha1 && got !== sha1) throw new Error(`Checksum mismatch for ${path.basename(dest)}`);
+            const r = await downloads.fetchFile(url, part, {
+                onProgress: (got, total) => {
+                    dl.progress(got, total);
+                    if (got > reported) { onBytes?.(got - reported); reported = got; }
+                },
+                onRetry: (err, attempt) => {
+                    dl.note(`Reconnecting (${err.message})`);
+                    downloadLog.warn(`${label} from ${new URL(url).host}: ${err.message}; retry ${attempt}`);
+                }
+            });
+            if (sha1 && r.sha1 !== sha1) throw new Error(`Checksum mismatch for ${path.basename(dest)}`);
             await fs.move(part, dest, { overwrite: true });
-            return { sha1: got };
+            dl.done();
+            return { sha1: r.sha1 };
         } catch (err) {
             await fs.remove(part).catch(() => {});
-            throw err;
+            const host = (() => { try { return new URL(url).host; } catch { return 'the server'; } })();
+            const e = /no data for|connection closed early|Network error/.test(err.message)
+                ? new Error(`${host} stopped sending ${label} (${err.message}). Try again later or from another network.`)
+                : err;
+            dl.fail(e);
+            throw e;
         }
     },
 

@@ -6,12 +6,18 @@ const { pathToFileURL } = require('url');
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
 if (process.env.INCURSION_USER_DATA) app.setPath('userData', process.env.INCURSION_USER_DATA);
+const logger = require('./util/log');
+logger.init(path.join(app.getPath('userData'), 'logs'));
+const log = logger.scope('app');
+process.on('uncaughtException', (err) => log.error('Uncaught exception:', err));
+process.on('unhandledRejection', (err) => log.error('Unhandled rejection:', err));
 // One instance per profile. A second launch just focuses the running window.
 if (!app.requestSingleInstanceLock()) app.exit(0);
 // Keep Chromium painting while the window is hidden off-screen.
 if (process.env.INCURSION_HIDDEN) app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 
 const storage = require('./util/storage');
+const downloads = require('./util/downloads');
 const cache = require('./util/cache');
 const api = require('./util/api');
 const packs = require('./util/packs');
@@ -168,8 +174,9 @@ function openExternal(url) {
     } catch {}
 }
 
-const send = (type, payload) => { if (win && !win.isDestroyed()) win.webContents.send('event', { type, payload }); };
+const send = (type, payload) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('event', { type, payload }); };
 packs.setEmitter(send);
+downloads.setEmitter(send);
 webpage.setEmitter(send);
 nativeTheme.on('updated', () => {
     if (win && !isMac) win.setTitleBarOverlay(overlayColors());
@@ -181,7 +188,7 @@ function handle(channel, fn) {
     ipcMain.handle(channel, async (_e, payload) => {
         try { return { ok: true, data: await fn(payload || {}) }; }
         catch (err) {
-            console.error(`[${channel}]`, err.message);
+            log.warn(`${channel} failed:`, err.code ? `${err.code}:` : '', err.stack || err.message);
             return { ok: false, error: err.message, code: err.code, extra: err.major ? { major: err.major } : undefined };
         }
     });
@@ -192,9 +199,10 @@ function task(label) {
     const id = `m${++taskSeq}`;
     const t = {
         update: (progress, detail) => send('task', { id, label, progress, detail, state: 'running' }),
-        done: (detail) => send('task', { id, label, progress: 1, detail, state: 'done' }),
-        fail: (detail) => send('task', { id, label, progress: 1, detail, state: 'error' })
+        done: (detail) => { log.info(`Done: ${label}${detail ? ` (${detail})` : ''}`); send('task', { id, label, progress: 1, detail, state: 'done' }); },
+        fail: (detail) => { log.warn(`Failed: ${label}: ${detail}`); send('task', { id, label, progress: 1, detail, state: 'error' }); }
     };
+    log.info(`Started: ${label}`);
     t.update(null);
     return t;
 }
@@ -392,6 +400,7 @@ handle('dialog:java', async () => {
     return j;
 });
 handle('shell:open', async ({ url }) => openExternal(url));
+handle('app:logs', async () => { await fs.ensureDir(logger.dir()); return shell.openPath(logger.dir()); });
 // Reveal files instead of opening them, since opening could run them.
 handle('shell:reveal', async ({ path: p }) => {
     const stat = await fs.stat(String(p || '')).catch(() => null);
@@ -410,6 +419,10 @@ handle('packs:import', async () => {
 handle('packs:forget', ({ path: p }) => packs.forget(p));
 handle('packs:load', ({ path: p }) => packs.load(p));
 handle('packs:info', ({ path: p, fields }) => packs.updateInfo(p, fields));
+handle('packs:retarget', async ({ path: p, gameVersion, loaderVersion, dryRun }) => {
+    if (!dryRun && launcher.packBusy(p)) throw new Error('Close the game before changing the pack’s Minecraft version.');
+    return packs.retarget(p, { gameVersion, loaderVersion, dryRun: !!dryRun });
+});
 handle('packs:add', ({ path: p, items }) => packs.addMods(p, items));
 handle('packs:remove', ({ path: p, keys }) => packs.removeMods(p, keys));
 handle('packs:check', ({ path: p, keys }) => packs.checkUpdates(p, { keys }));
@@ -648,6 +661,7 @@ handle('app:ready', () => { setTimeout(revealMain, 60); return true; });
 app.on('session-created', (ses) => ses.setPermissionRequestHandler((_wc, permission, cb) => cb(false)));
 
 app.whenReady().then(async () => {
+    log.info(`Incursion ${app.getVersion()} starting (Electron ${process.versions.electron}, ${process.platform} ${process.arch}, ${require('os').release()})`);
     session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'clipboard-sanitized-write'));
     const userData = app.getPath('userData');
     const { cacheFile } = storage.init(userData, secretBox);
@@ -655,6 +669,7 @@ app.whenReady().then(async () => {
     showSplash(theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors));
     await cache.init(cacheFile);
     await initDataDir();
+    log.info(`Profile: ${userData}; game files: ${datadir.get()}`);
     java.init(userData);
     files.init({ trashItem: (p) => shell.trashItem(p) });
     const bgDir = path.join(userData, 'backgrounds');
@@ -689,4 +704,7 @@ app.on('before-quit', (e) => {
     e.preventDefault();
     Promise.all([packs.flushAll(), cache.flush(), links.flush()]).finally(() => { flushed = true; app.quit(); });
 });
+app.on('render-process-gone', (_e, _wc, d) => log.error(`Renderer stopped: ${d.reason} (exit ${d.exitCode})`));
+app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') log.error(`${d.type} process stopped: ${d.reason} (exit ${d.exitCode})`); });
+app.on('will-quit', () => log.info('Quitting'));
 app.on('window-all-closed', () => { if (!isMac) app.quit(); });

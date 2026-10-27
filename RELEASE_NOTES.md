@@ -1,3 +1,42 @@
+# Incursion 2.9.0: Change Minecraft Versions, Compatibility Flags and Reliable Downloads
+
+## Highlights
+
+### Change a pack's Minecraft version
+- Edit Pack now lets you change the Minecraft version of a pack that already has content. The loader version switches to the recommended build for the new version, and you can pick another.
+- Before anything changes you see how many mods move to their file for the new version, which ones have none (they're turned off, not removed) and which hand-added files to check yourself.
+- Every new file is downloaded first. If any download fails, nothing in the pack changes.
+- The loader version can be changed on its own as before. The loader itself stays fixed once a pack has content.
+
+### Compatibility flags
+- Mods whose file doesn't fit the pack are flagged in the list: **Wrong Minecraft**, **Wrong Loader** or **Needs Other NeoForge/Fabric/…**. The platform mark turns red for the platform whose file is the problem, and the tooltip says why.
+- Two checks per platform: the Minecraft versions and loaders the site lists for the installed file, and the Minecraft and loader version ranges the jar itself requires.
+- A new **Incompatible** filter shows only flagged mods, the Issues tab lists them, and a mod's details show the reason for each platform.
+- Existing packs fill in the information in the background the first time they're opened.
+
+### Downloads that finish
+- Downloads no longer fail after a fixed two minutes. A download only gives up when the server sends nothing at all for 30 seconds, five times in a row.
+- A stalled connection picks up from the last byte received instead of starting again.
+- Larger files download in up to four parallel parts, which is much faster when a CDN is congested or throttles each connection (seen with Modrinth's CDN in some regions).
+- Downloads from CurseForge's redirector work the same way, and servers that don't support partial downloads still work.
+- When a download does fail, the message says which site stopped sending and suggests trying later or from another network.
+
+### Download progress
+- A Downloads panel under the status pill shows a progress bar for every file: size, speed and when it's reconnecting. It opens by itself for downloads that take more than a moment, and clicking the status pill hides or shows it.
+- Updating mods now shows progress in megabytes, so a slow update visibly moves instead of sitting at "0 of 5".
+- Minecraft's own game files appear in the panel while a pack launches.
+
+### App logs
+- Incursion now keeps a log of downloads, updates, launches and errors (5 MB, last three kept). Open it from Settings → Data → App Logs. Tokens and keys are masked.
+
+### Fixes
+- The Stop button in a pack's header no longer sits lower than the buttons next to it.
+
+### Game files folder stays tidy
+- Minecraft now runs inside each pack's own game folder. Before, its logs, crash dumps and some mod configs landed in the shared game files folder, and crash analysis couldn't find the latest log.
+
+---
+
 # Incursion 2.8.0: Manual Mod Files, New Windows Setup and Universal macOS
 
 ## Highlights

@@ -2,14 +2,14 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Allow-listed bridge. Every call resolves to { ok, data } or { ok: false, error }.
 const CHANNELS = new Set([
-    'app:info', 'app:theme', 'app:ready', 'app:setup-done',
+    'app:info', 'app:theme', 'app:ready', 'app:setup-done', 'app:logs',
     'settings:get', 'settings:keys', 'settings:check',
     'cache:stats', 'cache:clear',
     'versions:game', 'versions:loader',
     'dialog:folder', 'dialog:icon',
     'shell:open', 'shell:reveal',
     'packs:library', 'packs:create', 'packs:import', 'packs:forget', 'packs:load', 'packs:info',
-    'packs:add', 'packs:remove', 'packs:check', 'packs:apply', 'packs:redownload', 'packs:sync', 'packs:export',
+    'packs:retarget', 'packs:add', 'packs:remove', 'packs:check', 'packs:apply', 'packs:redownload', 'packs:sync', 'packs:export',
     'mods:search', 'settings:prefs', 'dialog:background', 'dialog:java',
     'links:set', 'links:clear', 'links:info', 'links:settle', 'mods:changelog', 'community:status', 'community:refresh',
     'java:list', 'java:required', 'java:install', 'java:uninstall', 'java:dir',

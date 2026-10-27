@@ -1,10 +1,13 @@
 name: Build and Release Incursion
 
-# Runs only when started from the Actions tab or when a version tag (e.g. v2.7.0) is pushed.
-# Ordinary commits never build or release anything.
+# Runs when started from the Actions tab, when a version tag (e.g. v2.7.0) is pushed, or when a commit pushed to main
+# has the version in its title (e.g. "v2.9.0" or "v2.9.0: Reliable downloads"). The version is the one in package.json.
+# Other commits, including ones that only bump the version, never build or release anything.
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -26,6 +29,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       published: ${{ steps.release.outputs.published }}
+      requested: ${{ steps.requested.outputs.requested }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -35,6 +39,27 @@ jobs:
       - name: Get Version
         id: version
         run: echo "version=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Tags and manual runs always count. A branch push counts only when the title of its newest commit names this
+      # version as a whole word, so v2.9.0 doesn't match v2.9.01 or v2.9.0-beta.
+      - name: Check the Commit Title
+        id: requested
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          title="${MESSAGE%%$'\n'*}"
+          pattern="(^|[^[:alnum:].+-])${VERSION//./\\.}($|[^[:alnum:].+-])"
+          if [ "$EVENT" != "push" ] || [[ "$REF" == refs/tags/* ]]; then
+            echo "requested=true" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$title" | grep -Eq "$pattern"; then
+            echo "requested=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "requested=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Not a release: the commit title doesn't contain $VERSION."
+          fi
 
       - name: Look for an Existing Release
         id: release
@@ -52,7 +77,7 @@ jobs:
   build:
     name: Build (${{ matrix.os }})
     needs: check
-    if: needs.check.outputs.published != 'true'
+    if: needs.check.outputs.requested == 'true' && needs.check.outputs.published != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

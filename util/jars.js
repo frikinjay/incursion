@@ -55,7 +55,7 @@ function parseJsonLoose(buf) {
 const PLATFORM_IDS = new Set(['minecraft', 'java', 'forge', 'neoforge', 'fabricloader', 'fabric-loader', 'quilt_loader']);
 
 function parseModsToml(text, jarVersion) {
-    const mods = [], incompatible = [], depSides = [], depends = [];
+    const mods = [], incompatible = [], depSides = [], depends = [], platform = {};
     let clientSideOnly = false;
     const blocks = text.split(/^\s*\[\[/m);
     for (const block of blocks) {
@@ -74,10 +74,24 @@ function parseModsToml(text, jarVersion) {
             // Old Forge uses mandatory=true, NeoForge uses type="required".
             const required = type ? type === 'required' : /^\s*mandatory\s*=\s*true/m.test(block);
             if (id && required && !PLATFORM_IDS.has(id)) depends.push({ id, versions: val('versionRange') || '*' });
+            if (id && required && PLATFORM_IDS.has(id) && !(id in platform)) platform[id] = val('versionRange') || '*';
             void mandatory;
         }
     }
-    return { mods, incompatible, clientSideOnly, depSides, depends };
+    return { mods, incompatible, clientSideOnly, depSides, depends, platform };
+}
+
+// The Minecraft and loader version ranges a mod's own metadata asks for (null when it doesn't say). In mods.toml a bare
+// version means "this or newer" (Maven), while fabric.mod.json and quilt.mod.json use predicates where it means exact,
+// so Maven ones are written as intervals to read the same way everywhere.
+function requiresOf(deps, { maven = false } = {}) {
+    const range = (v) => {
+        if (v == null) return null;
+        const r = [].concat(v).join(' || ') || '*';
+        return maven && r !== '*' && !/[[(]/.test(r) && !/\$\{/.test(r) ? `[${r},)` : r;
+    };
+    const loaderId = ['neoforge', 'forge', 'fabricloader', 'fabric-loader', 'quilt_loader'].find(id => deps[id] != null);
+    return { minecraft: range(deps.minecraft), loader: loaderId ? { id: loaderId === 'fabric-loader' ? 'fabricloader' : loaderId, versions: range(deps[loaderId]) } : null };
 }
 
 function manifestVersion(buf) {
@@ -106,7 +120,7 @@ function classStrings(buf) {
 async function describe(src, depth = 0) {
     const entries = await src.entries();
     const get = async (n) => (entries.has(n) ? src.readEntry(entries.get(n)) : null);
-    const out = { ids: [], bundled: [], incompatible: [], depends: [], loaders: [], side: { declared: null, clientDeps: false, serverCrash: null } };
+    const out = { ids: [], bundled: [], incompatible: [], depends: [], loaders: [], side: { declared: null, clientDeps: false, serverCrash: null }, requires: { minecraft: null, loader: null } };
     const nested = [];
     const serverEntrypoints = [];
 
@@ -119,6 +133,7 @@ async function describe(src, depth = 0) {
             for (const p of [].concat(j.provides || [])) if (typeof p === 'string') out.ids.push({ id: p, version: String(j.version ?? ''), name: j.name || p, provided: true });
             for (const [id, range] of Object.entries(j.breaks || {})) out.incompatible.push({ id, versions: [].concat(range).join(' || ') });
             for (const [id, range] of Object.entries(j.depends || {})) if (!PLATFORM_IDS.has(id)) out.depends.push({ id, versions: [].concat(range).join(' || ') || '*' });
+            out.requires = requiresOf(j.depends || {});
             for (const jar of j.jars || []) if (jar?.file) nested.push(jar.file);
             if (j.environment === 'client' || j.environment === 'server') out.side.declared = j.environment;
             for (const key of ['main', 'server']) for (const e of [].concat(j.entrypoints?.[key] || [])) serverEntrypoints.push(typeof e === 'string' ? e : e?.value);
@@ -128,10 +143,13 @@ async function describe(src, depth = 0) {
     if (quilt) {
         const j = parseJsonLoose(quilt)?.quilt_loader;
         if (j?.id && !out.ids.some(x => x.id === j.id)) { out.loaders.push('quilt'); out.ids.push({ id: j.id, version: String(j.version ?? ''), name: j.metadata?.name || j.id }); }
+        const platformDeps = {};
         for (const d of [].concat(j?.depends || [])) {
             const id = typeof d === 'string' ? d : d?.id;
+            if (id && !d?.optional && PLATFORM_IDS.has(id)) platformDeps[id] = typeof d === 'string' ? '*' : (d?.versions ?? '*');
             if (id && !d?.optional && !PLATFORM_IDS.has(id) && !out.depends.some(x => x.id === id)) out.depends.push({ id, versions: [].concat(d?.versions || '*').join(' || ') });
         }
+        if (!out.requires.minecraft && !out.requires.loader) out.requires = requiresOf(platformDeps);
         const root = parseJsonLoose(quilt);
         const env = root?.minecraft?.environment;
         if (env === 'client' || env === 'dedicated_server') out.side.declared = env === 'client' ? 'client' : 'server';
@@ -146,6 +164,7 @@ async function describe(src, depth = 0) {
         for (const m of parsed.mods) if (!out.ids.some(x => x.id === m.id)) out.ids.push(m);
         out.incompatible.push(...parsed.incompatible);
         for (const d of parsed.depends) if (!out.depends.some(x => x.id === d.id)) out.depends.push(d);
+        if (!out.requires.minecraft && !out.requires.loader) out.requires = requiresOf(parsed.platform, { maven: true });
         if (parsed.clientSideOnly) out.side.declared = 'client';
         // Forge / NeoForge client mods mark every dependency side="CLIENT". Common mods use BOTH.
         if (parsed.depSides.length && parsed.depSides.every(x => x === 'CLIENT')) out.side.clientDeps = true;

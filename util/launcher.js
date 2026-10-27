@@ -3,6 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const storage = require('./storage');
+const downloads = require('./downloads');
+const log = require('./log').scope('launch');
 const java = require('./java');
 const msauth = require('./msauth');
 
@@ -373,13 +375,22 @@ const launcher = {
             const prepared = new Promise(r => { releasePrepare = r; });
             const release = () => { if (!released) { released = true; releasePrepare(); } };
 
+            // The game's own files come through EML's downloader, shown as one entry in the downloads list.
+            let gameFiles = null;
+            const gameFilesDone = (err) => { if (!gameFiles) return; if (err) gameFiles.fail(err); else gameFiles.done(); gameFiles = null; };
+            inst.gameFilesDone = gameFilesDone;
             const on = {
                 launch_compute_download: () => inst.set({ status: 'Checking Game Files', progress: null }),
                 launch_download: ({ total }) => { if (total?.amount) inst.log(`Downloading ${total.amount} files`, 'debug'); },
-                download_progress: ({ total, downloaded }) => inst.set({ status: 'Downloading Minecraft', progress: total?.size ? downloaded.size / total.size : null }),
-                launch_install_loader: () => inst.set({ status: `Installing ${require('./loaders').LOADERS[meta.loader]?.label || meta.loader}`, progress: null }),
-                launch_check_java: () => inst.set({ status: 'Checking Java', progress: null }),
+                download_progress: ({ total, downloaded }) => {
+                    inst.set({ status: 'Downloading Minecraft', progress: total?.size ? downloaded.size / total.size : null });
+                    gameFiles ||= downloads.external(`Minecraft ${meta.gameVersion} game files`, 'https://piston-data.mojang.com/');
+                    gameFiles.progress(downloaded?.size || 0, total?.size || null);
+                },
+                launch_install_loader: () => { gameFilesDone(); inst.set({ status: `Installing ${require('./loaders').LOADERS[meta.loader]?.label || meta.loader}`, progress: null }); },
+                launch_check_java: () => { gameFilesDone(); inst.set({ status: 'Checking Java', progress: null }); },
                 launch_launch: (cfg) => {
+                    gameFilesDone();
                     inst.log(`Launching Minecraft ${meta.gameVersion} with Java ${cfg?.java?.version || '?'}`, 'debug');
                     inst.set({ state: 'running', status: 'Running', progress: null });
                     release();
@@ -393,7 +404,7 @@ const launcher = {
                 launch_debug: (m) => inst.log(m, 'debug'),
                 launch_close: (code) => { inst.exitCode = code; },
                 launch_data: (line) => inst.log(line, levelOf(line)),
-                download_error: (e) => inst.log(`Download failed: ${e.filename} (${e.message})`, 'error'),
+                download_error: (e) => { inst.log(`Download failed: ${e.filename} (${e.message})`, 'error'); log.warn(`Game file download failed: ${e.filename} (${e.message})`); },
                 launch_crash: (c) => { inst.crash = { code: c.code, logsPath: c.logsPath, crashReportsDir: c.crashReportsDir }; }
             };
             const worker = startWorker();
@@ -439,16 +450,20 @@ const launcher = {
                 exitCode: inst.crash?.code ?? code
             });
             inst.log(crashed ? `Minecraft exited with code ${inst.crash.code}` : 'Minecraft closed', crashed ? 'error' : 'debug');
+            log.info(`${meta.name}: ${crashed ? `game crashed (exit ${inst.crash.code})` : 'game closed'}`);
             inst.flush();
             if (crashed) analyseCrash(inst, meta).catch(() => {});
         }, (err) => {
             if (err.code === 'CANCELLED' || inst.cancelled) {
+                inst.gameFilesDone?.(new Error('Cancelled'));
                 inst.log('Launch cancelled', 'warn');
                 inst.flush();
                 inst.set({ state: 'stopped', status: 'Cancelled', endedAt: Date.now(), progress: null });
                 return;
             }
+            inst.gameFilesDone?.(err);
             inst.log(err.message || String(err), 'error');
+            log.warn(`${meta.name}: launch failed:`, err.message || String(err));
             inst.flush();
             inst.set({ state: 'failed', status: err.message || 'Launch failed', endedAt: Date.now(), progress: null, errorCode: err.code || null, javaMajor: err.major || null });
         });

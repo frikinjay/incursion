@@ -12,8 +12,10 @@ const profiles = require('./profiles');
 const links = require('./links');
 const configs = require('./configs');
 const manual = require('./manual');
+const compat = require('./compat');
 
 const { modKey } = api;
+const log = require('./log').scope('packs');
 const AUTO_CHECK_AFTER = 30 * 60 * 1000;
 const AUTO_SYNC_AFTER = 24 * 3600 * 1000;
 
@@ -25,9 +27,10 @@ function task(label) {
     const t = {
         id,
         update(progress, detail) { emit('task', { id, label, progress, detail, state: 'running' }); },
-        done(detail) { emit('task', { id, label, progress: 1, detail, state: 'done' }); },
-        fail(detail) { emit('task', { id, label, progress: 1, detail, state: 'error' }); }
+        done(detail) { log.info(`Done: ${label}${detail ? ` (${detail})` : ''}`); emit('task', { id, label, progress: 1, detail, state: 'done' }); },
+        fail(detail) { log.warn(`Failed: ${label}: ${detail}`); emit('task', { id, label, progress: 1, detail, state: 'error' }); }
     };
+    log.info(`Started: ${label}`);
     t.update(null);
     return t;
 }
@@ -71,10 +74,14 @@ function migrate(meta) {
 }
 
 // Bump when scanEntry learns something new. Older scans are redone in the background when the pack opens.
-const SCAN_VERSION = 3;
+const SCAN_VERSION = 5;
 
+// The first readable jar describes the mod. Each platform's jar also records the Minecraft and loader versions it
+// requires (requires.<platform>), since the two files can differ.
 async function scanEntry(packPath, m) {
     if (m.type && m.type !== 'mod') return undefined;
+    let out = null;
+    const requires = {};
     for (const pl of ['modrinth', 'curseforge']) {
         const f = m.installedFiles?.[pl];
         if (!f) continue;
@@ -82,10 +89,13 @@ async function scanEntry(packPath, m) {
         if (!(await fs.pathExists(file))) continue;
         try {
             const d = await jars.inspectJar(file);
-            return { v: SCAN_VERSION, file: f, ids: d.ids, bundled: d.bundled, incompatible: d.incompatible, depends: d.depends, loaders: d.loaders, side: d.side };
-        } catch { return { file: f, ids: [], bundled: [], incompatible: [], error: true }; }
+            requires[pl] = d.requires;
+            out ||= { v: SCAN_VERSION, file: f, ids: d.ids, bundled: d.bundled, incompatible: d.incompatible, depends: d.depends, loaders: d.loaders, side: d.side };
+        } catch { out ||= { file: f, ids: [], bundled: [], incompatible: [], error: true }; }
     }
-    return m.contents || null;
+    if (!out) return m.contents || null;
+    out.requires = requires;
+    return out;
 }
 
 class PackService {
@@ -184,7 +194,8 @@ class PackService {
             checkedAt: s.pending.checkedAt || 0,
             missing: s.missing,
             manualMissing: s.manualMissing,
-            issues: [...insights.issues(s.meta, { missing: s.missing, manualMissing: s.manualMissing }), ...untrackedIssue(s.untracked)],
+            issues: [...insights.issues(s.meta, { missing: s.missing, manualMissing: s.manualMissing }), ...compat.issues(s.meta), ...untrackedIssue(s.untracked)],
+            compat: compat.all(s.meta),
             untracked: s.untracked,
             busy: [...(this.busy.get(s.meta.path) || [])]
         };
@@ -277,7 +288,10 @@ class PackService {
         if (s.meta.mods.length && now - (s.pending.checkedAt || 0) > AUTO_CHECK_AFTER) {
             this.checkUpdates(packPath, { quiet: true }).catch(() => {});
         }
-        if (s.meta.mods.length && now - (s.meta.syncedAt || 0) > AUTO_SYNC_AFTER) {
+        // Packs made before files recorded their targets get them filled in now, so compatibility flags show up.
+        const backfill = !s.targetsTried && s.meta.mods.some(compat.needsTargets);
+        if (backfill) s.targetsTried = true;   // once per session: without a CurseForge key some can't be filled
+        if (s.meta.mods.length && (now - (s.meta.syncedAt || 0) > AUTO_SYNC_AFTER || backfill)) {
             this.sync(packPath, { quiet: true }).catch(() => {});
         }
         return this.snapshot(s);
@@ -525,6 +539,19 @@ class PackService {
             const t = task(todo.length === 1 ? 'Updating 1 Item' : `Updating ${todo.length} Items`);
             const failed = [];
             let n = 0;
+            // Progress follows bytes, so a slow download still shows movement instead of sitting at "0 of N".
+            // Identical files on both platforms download once (see downloadAll), so count them once.
+            const total = todo.reduce((sum, k) => {
+                const seen = new Set();
+                return sum + platforms.reduce((x, pl) => {
+                    const u = s.pending.updates[k]?.[pl];
+                    if (!u || (u.sha1 && seen.has(u.sha1))) return x;
+                    seen.add(u.sha1);
+                    return x + (u.size || 0);
+                }, 0);
+            }, 0);
+            let got = 0;
+            const progress = () => t.update(total ? Math.min(0.99, got / total) : n / todo.length, `${n} of ${todo.length}${total ? ` · ${(got / 1048576).toFixed(1)} of ${(total / 1048576).toFixed(1)} MB` : ''}`);
             await pool(todo, 6, async (key) => {
                 const mod = s.meta.mods.find(m => modKey(m) === key);
                 const all = s.pending.updates[key];
@@ -532,7 +559,7 @@ class PackService {
                 try {
                     if (!mod) return;
                     const before = modKey(mod);
-                    await this._applyPatch(packPath, mod, patch);
+                    await this._applyPatch(packPath, mod, patch, (b) => { got += b; progress(); });
                     const rest = Object.fromEntries(Object.entries(all).filter(([pl]) => !platforms.includes(pl)));
                     delete s.pending.updates[key];
                     if (Object.keys(rest).length) s.pending.updates[modKey(mod) || before] = rest;
@@ -540,7 +567,8 @@ class PackService {
                     this._changed(s);
                 } catch (err) {
                     failed.push({ title: mod?.names.curseforge || mod?.names.modrinth || key, error: err.message });
-                } finally { t.update(++n / todo.length, `${n} of ${todo.length}`); }
+                    log.warn(`Update of ${failed[failed.length - 1].title} failed:`, err.message);
+                } finally { n++; progress(); }
             });
             if (failed.length) t.fail(`${failed.length} failed: ${failed[0].error}`); else t.done('All updates installed');
             return { updated: todo.length - failed.length, failed, snapshot: this.snapshot(s) };
@@ -548,9 +576,13 @@ class PackService {
     }
 
     // Download new files first, then swap metadata and delete old files, platform by platform.
-    async _applyPatch(packPath, mod, patch) {
+    // staged: { [platform]: { file, sha1 } } already downloaded elsewhere, moved into place instead of downloaded.
+    async _applyPatch(packPath, mod, patch, onBytes, staged = null) {
         const pls = ['curseforge', 'modrinth'].filter(pl => patch[pl]);
-        const got = await storage.downloadAll(pls.map(pl => ({ url: patch[pl].url, dest: storage.paths.modFile(packPath, pl, `${patch[pl].fileName}${mod.disabled ? storage.paths.DISABLED : ''}`, mod.type), sha1: patch[pl].sha1 })));
+        const destOf = (pl) => storage.paths.modFile(packPath, pl, `${patch[pl].fileName}${mod.disabled ? storage.paths.DISABLED : ''}`, mod.type);
+        const got = staged
+            ? await Promise.all(pls.map(async pl => { await fs.move(staged[pl].file, destOf(pl), { overwrite: true }); return { sha1: staged[pl].sha1 }; }))
+            : await storage.downloadAll(pls.map(pl => ({ url: patch[pl].url, dest: destOf(pl), sha1: patch[pl].sha1 })), { onBytes });
         for (const [i, pl] of pls.entries()) {
             const u = patch[pl];
             const res = got[i];
@@ -562,12 +594,95 @@ class PackService {
             (mod.sizes ||= {})[pl] = u.size;
             (mod.deps ||= {})[pl] = u.deps;
             (mod.incompat ||= {})[pl] = u.incompat || [];
+            // Older saved updates don't carry the target; dropping the stale one lets the next sync fill it in.
+            if (u.target) (mod.targets ||= {})[pl] = u.target; else if (mod.targets) delete mod.targets[pl];
             mod.meta ||= {};
             if (pl === 'curseforge') { mod.meta.cfFileId = u.fileId; mod.meta.cfDisplayName = u.displayName; if (u.env) (mod.environments ||= {}).curseforge = u.env; }
             else { mod.meta.mrVersionId = u.versionId; mod.meta.mrVersionNumber = u.versionNumber; mod.meta.mrDate = u.date; }
         }
         mod.updatedAt = Date.now();
         mod.contents = await scanEntry(packPath, mod);
+    }
+
+    // Moves the pack to another Minecraft version: every mod gets its file for that version on each platform. Hand-added
+    // files are left alone, and mods without a file for the new version are turned off. dryRun only reports what
+    // would happen. All new files are downloaded to a staging folder first, so a failed download changes nothing.
+    async retarget(packPath, { gameVersion, loaderVersion, dryRun = false }) {
+        return this._exclusive(packPath, 'retarget', async () => {
+            const s = await this._get(packPath);
+            const { meta } = s;
+            if (!gameVersion) throw new Error('Choose a Minecraft version.');
+            const sameGame = gameVersion === meta.gameVersion;
+            const loaders = await api.getLoaderVersions({ loader: meta.loader, gameVersion });
+            if (!loaders.length) throw new Error(`${meta.loader} has no builds for Minecraft ${gameVersion}.`);
+            const loaderPick = loaders.some(v => v.version === loaderVersion) ? loaderVersion : (loaders.find(v => v.stable) || loaders[0]).version;
+            const title = (m) => m.names.curseforge || m.names.modrinth || m.installedFiles?.modrinth || m.installedFiles?.curseforge || modKey(m);
+
+            const tracked = meta.mods.filter(m => !manual.isLocal(m));
+            const handAdded = meta.mods.filter(m => manual.isLocal(m) || manual.PLATFORMS.some(pl => manual.isManual(m, pl))).map(title);
+            const t = task(dryRun ? `Checking Mods for ${gameVersion}` : `Moving to Minecraft ${gameVersion}`);
+            try {
+                const res = sameGame ? { updates: {}, missing: {}, errors: [] } : await api.checkUpdates({
+                    mods: tracked, gameVersion, loader: meta.loader, hashOf: this._hashOf(packPath), retarget: true,
+                    skip: (m, pl) => manual.isManual(m, pl)
+                }, (pct) => t.update(dryRun ? pct / 100 : pct / 400));
+                if (res.errors.length) throw new Error(`Couldn’t check every mod: ${res.errors.join(' · ')}`);
+                const byKey = new Map(meta.mods.map(m => [modKey(m), m]));
+                const missing = Object.keys(res.missing).filter(k => byKey.has(k));
+                const moving = Object.keys(res.updates).filter(k => byKey.has(k) && !res.missing[k]);
+                const summary = {
+                    gameVersion, loaderVersion: loaderPick,
+                    moving: moving.length,
+                    unchanged: tracked.length - moving.length - missing.length,
+                    missing: missing.map(k => ({ key: k, title: title(byKey.get(k)), platforms: res.missing[k] })),
+                    handAdded
+                };
+                log.info(`${meta.name}: ${gameVersion} check: ${moving.length} to move, ${summary.unchanged} unchanged, ${missing.length} without a file`);
+                if (dryRun) { t.done(`${moving.length} to move, ${missing.length} without a ${gameVersion} file`); return summary; }
+
+                // 1. Download everything into staging.
+                const staging = path.join(packPath, '.retarget');
+                await fs.remove(staging);
+                const staged = new Map();
+                const total = moving.reduce((n, k) => n + Object.values(res.updates[k]).reduce((x, u) => x + (u.size || 0), 0), 0);
+                let got = 0;
+                // After the first failure nothing new starts, and cleanup waits for the downloads already running.
+                let failure = null;
+                await pool(moving, 6, async (key) => {
+                    if (failure) return;
+                    try {
+                        const patch = res.updates[key];
+                        const pls = Object.keys(patch);
+                        const files = await storage.downloadAll(pls.map(pl => ({ url: patch[pl].url, dest: path.join(staging, pl, patch[pl].fileName), sha1: patch[pl].sha1 })), {
+                            onBytes: (b) => { got += b; t.update(0.25 + 0.7 * (total ? got / total : 0), `${(got / 1048576).toFixed(1)} of ${(total / 1048576).toFixed(1)} MB`); }
+                        });
+                        staged.set(key, Object.fromEntries(pls.map((pl, i) => [pl, { file: path.join(staging, pl, patch[pl].fileName), sha1: files[i].sha1 }])));
+                    } catch (err) { failure ||= err; }
+                });
+                if (failure) {
+                    await fs.remove(staging).catch(() => {});
+                    throw new Error(`Nothing was changed: ${failure.message}`);
+                }
+
+                // 2. Swap files and metadata, then switch the pack's version.
+                for (const key of moving) {
+                    const mod = byKey.get(key);
+                    await this._applyPatch(packPath, mod, res.updates[key], null, staged.get(key));
+                }
+                await fs.remove(staging).catch(() => {});
+                const from = meta.gameVersion;
+                meta.gameVersion = gameVersion;
+                meta.loaderVersion = loaderPick;
+                s.pending.updates = {};
+                s.pending.checkedAt = 0;
+                this._changed(s);
+                if (missing.length) await this.setDisabled(packPath, missing, true);
+                else await this._flush(packPath);
+                log.info(`${meta.name}: moved from ${from} to ${gameVersion} (${moving.length} moved, ${missing.length} turned off)`);
+                t.done(missing.length ? `${moving.length} moved, ${missing.length} turned off` : `${moving.length} mods moved`);
+                return { ...summary, snapshot: this.snapshot(s) };
+            } catch (err) { t.fail(err.message); throw err; }
+        });
     }
 
     async setVersion(packPath, key, { platform, versionId, pin = false }) {
@@ -583,8 +698,8 @@ class PackService {
             if (!r[platform]) throw new Error(r.errors[0] || 'That version is not available.');
             if (r.curseforge?.blocked) throw new Error('Its author doesn’t allow apps to download it. Download it from CurseForge, then choose the file in the mod’s details.');
             const patch = platform === 'modrinth'
-                ? { modrinth: { fileName: r.modrinth.version.fileName, url: r.modrinth.version.url, versionId: r.modrinth.version.id, versionNumber: r.modrinth.version.number, date: r.modrinth.version.date, sha1: r.modrinth.version.sha1, sha512: r.modrinth.version.sha512, size: r.modrinth.version.size, deps: r.modrinth.version.deps, incompat: r.modrinth.version.incompat } }
-                : { curseforge: { fileName: r.curseforge.file.fileName, url: r.curseforge.file.url, fileId: r.curseforge.file.id, displayName: r.curseforge.file.displayName, date: r.curseforge.file.date, sha1: r.curseforge.file.sha1, size: r.curseforge.file.size, deps: r.curseforge.file.deps, incompat: r.curseforge.file.incompat, env: r.curseforge.file.env } };
+                ? { modrinth: { fileName: r.modrinth.version.fileName, url: r.modrinth.version.url, versionId: r.modrinth.version.id, versionNumber: r.modrinth.version.number, date: r.modrinth.version.date, sha1: r.modrinth.version.sha1, sha512: r.modrinth.version.sha512, size: r.modrinth.version.size, deps: r.modrinth.version.deps, incompat: r.modrinth.version.incompat, target: api.targetOf(r.modrinth.version) } }
+                : { curseforge: { fileName: r.curseforge.file.fileName, url: r.curseforge.file.url, fileId: r.curseforge.file.id, displayName: r.curseforge.file.displayName, date: r.curseforge.file.date, sha1: r.curseforge.file.sha1, size: r.curseforge.file.size, deps: r.curseforge.file.deps, incompat: r.curseforge.file.incompat, env: r.curseforge.file.env, target: api.targetOf(r.curseforge.file) } };
             await this._applyPatch(packPath, mod, patch);
             if (pin) mod.pinned = true;
             if (s.pending.updates[key]) delete s.pending.updates[key][platform];
@@ -923,7 +1038,9 @@ class PackService {
             const s = await this._get(packPath);
             const t = quiet ? null : task('Refreshing Mod Info');
             try {
+                const started = Date.now();
                 const { changed } = await api.syncMetadata({ mods: s.meta.mods, force: !quiet, hashOf: this._hashOf(packPath) });
+                log.info(`${s.meta.name}: mod info refreshed in ${((Date.now() - started) / 1000).toFixed(1)} s (${changed} changed)`);
                 s.meta.syncedAt = Date.now();
                 this._changed(s);
                 t?.done(changed ? `${changed} mods refreshed` : 'Already current');

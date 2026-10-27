@@ -298,7 +298,7 @@
             const items = snap.issues;
             listCard.replaceChildren(
                 h('h3', 'Problems'),
-                h('p', 'Conflicts declared by the platforms or inside the mod files, duplicate mods, missing files, and jars added to the pack folders by hand.'),
+                h('p', 'Files made for another Minecraft version or loader, conflicts declared by the platforms or inside the mod files, duplicate mods, missing files, and jars added to the pack folders by hand.'),
                 items.length ? h('div.group', { style: { margin: 0 } }, items.map(i => h('div.issue',
                     h(`div.ic.${i.severity}`, icon(ISSUE_ICON[i.kind] || 'layers')),
                     h('div', { style: { minWidth: 0 } }, h('div.t', i.title), h('div.d', i.detail)),
@@ -328,7 +328,7 @@
         return { update(next) { snap = next; renderIssues(); } };
     }
 
-    const ISSUE_ICON = { conflict: 'bug', missing: 'download', untracked: 'import', 'manual-download': 'download', 'manual-missing': 'warn', 'manual-outdated': 'history', manual: 'file' };
+    const ISSUE_ICON = { incompatible: 'warn', conflict: 'bug', missing: 'download', untracked: 'import', 'manual-download': 'download', 'manual-missing': 'warn', 'manual-outdated': 'history', manual: 'file' };
 
     const PLAN_TEXT = {
         link: () => 'Both the Modrinth and CurseForge files are present. It will be added to the pack as one mod.',

@@ -10,11 +10,12 @@
         const glyph = el.querySelector('.island-glyph use');
         const tasks = new Map();
         let flash = null, flashTimer = null;
+        let downloading = null;   // shown when downloads run without a task of their own, so the panel can be reopened
         const CIRC = 50.27;
 
         function render() {
             const running = [...tasks.values()].filter(t => t.state === 'running');
-            const item = flash || running[running.length - 1];
+            const item = flash || running[running.length - 1] || downloading;
             if (!item) { el.classList.remove('show'); return; }
             const wasHidden = !el.classList.contains('show');
             el.classList.add('show');
@@ -44,9 +45,79 @@
                 else { tasks.delete(t.id); showFlash(t, t.state === 'error' ? 5000 : 2600); }
                 render();
             },
+            downloads(info) { downloading = info ? { label: 'Downloading', state: 'running', ...info } : null; render(); },
             toast(labelText, detailText = '', kind = 'done') { showFlash({ label: labelText, detail: detailText, state: kind }, kind === 'error' ? 5000 : 2400); },
             error(err) { showFlash({ label: typeof err === 'string' ? err : err.message, detail: '', state: 'error' }, 5000); }
         };
+    })();
+
+    // One bar per file being downloaded, under the island. It opens by itself while something downloads (unless closed
+    // with the button) and clicking the island brings it back.
+    const Downloads = (() => {
+        const el = document.getElementById('downloads');
+        const list = el.querySelector('.downloads-list');
+        const summary = el.querySelector('.downloads-summary');
+        const island = document.getElementById('island');
+        const rows = new Map();
+        const MAX_ROWS = 6;
+        let items = [];
+        let hidden = false;
+        try { hidden = localStorage.getItem('incursion.downloads.hidden') === '1'; } catch {}
+
+        const size = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(n >= 104857600 ? 0 : 1)} MB` : `${Math.max(0, Math.round(n / 1024))} KB`);
+        const rate = (n) => (n == null ? '' : `${size(n)}/s`);
+        const setHidden = (v) => { hidden = v; try { localStorage.setItem('incursion.downloads.hidden', v ? '1' : '0'); } catch {} render(true); };
+
+        el.querySelector('.downloads-close').addEventListener('click', () => setHidden(true));
+        island.addEventListener('click', () => { if (items.length) setHidden(el.classList.contains('show')); });
+
+        function row(d) {
+            let r = rows.get(d.id);
+            if (!r) {
+                r = { el: h('div.dl-row'), name: h('span.dl-name'), meta: h('span.dl-meta'), fill: h('span.dl-fill'), note: h('div.dl-note') };
+                r.el.append(h('div.dl-top', r.name, r.meta), h('div.dl-bar', r.fill), r.note);
+                rows.set(d.id, r);
+            }
+            r.el.classList.toggle('done', d.state === 'done');
+            r.el.classList.toggle('error', d.state === 'error');
+            r.el.classList.toggle('indeterminate', d.state === 'running' && !d.total);
+            r.name.textContent = d.name;
+            r.name.title = `${d.name}${d.host ? ` from ${d.host}` : ''}`;
+            const pct = d.total ? Math.min(1, d.received / d.total) : d.state === 'done' ? 1 : 0;
+            r.fill.style.transform = d.state === 'running' && !d.total ? '' : `scaleX(${pct})`;
+            r.meta.textContent = d.state === 'done' ? `${size(d.received)} · Done`
+                : d.state === 'error' ? 'Failed'
+                : `${size(d.received)}${d.total ? ` of ${size(d.total)}` : ''}${d.speed != null ? ` · ${rate(d.speed)}` : ''}`;
+            r.note.textContent = d.note || '';
+            return r.el;
+        }
+
+        function render(force = false) {
+            const running = items.filter(d => d.state === 'running');
+            // Downloads that finish in under a second aren't worth opening the panel for.
+            const worth = items.some(d => d.state === 'error' || (d.state === 'running' && Date.now() - d.startedAt > 700));
+            const show = !!items.length && !hidden && (worth || force || el.classList.contains('show'));
+            el.classList.toggle('show', show);
+            island.classList.toggle('has-downloads', !!items.length);
+            for (const id of rows.keys()) if (!items.some(d => d.id === id)) rows.delete(id);
+            const rank = (d) => (d.state === 'error' ? 0 : d.state === 'running' ? 1 : 2);
+            const ordered = [...items].sort((a, b) => rank(a) - rank(b) || a.startedAt - b.startedAt);
+            list.replaceChildren(...ordered.slice(0, MAX_ROWS).map(row));
+            if (ordered.length > MAX_ROWS) list.append(h('div.dl-more', `${ordered.length - MAX_ROWS} more`));
+            const speed = running.reduce((n, d) => n + (d.speed || 0), 0);
+            summary.textContent = running.length ? `${running.length} active${speed ? ` · ${rate(speed)}` : ''}` : '';
+            const known = running.filter(d => d.total);
+            const total = known.reduce((n, d) => n + d.total, 0);
+            Island.downloads(running.length ? {
+                detail: `${running.length === 1 ? '1 file' : `${running.length} files`}${speed ? ` · ${rate(speed)}` : ''}`,
+                progress: total ? known.reduce((n, d) => n + d.received, 0) / total : null
+            } : null);
+        }
+
+        // Re-check each second so a download that turns out slow still opens the panel.
+        setInterval(() => { if (items.some(d => d.state === 'running')) render(); }, 1000);
+
+        return { update(next) { items = next || []; render(); } };
     })();
 
     let openLayers = [];
@@ -442,5 +513,5 @@
     };
     new MutationObserver((muts) => { for (const m of muts) for (const n of m.addedNodes) upgrade(n); }).observe(document.body, { childList: true, subtree: true });
 
-    window.UI = { Island, drawer, dialog, confirm, choose, prompt, menu, segmented, picker, toggle, checkbox, enhanceSelect, enhanceRange };
+    window.UI = { Island, Downloads, drawer, dialog, confirm, choose, prompt, menu, segmented, picker, toggle, checkbox, enhanceSelect, enhanceRange };
 })();
