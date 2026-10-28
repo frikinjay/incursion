@@ -30,6 +30,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       published: ${{ steps.release.outputs.published }}
       requested: ${{ steps.requested.outputs.requested }}
+      title: ${{ steps.notes.outputs.title }}
+      notes: ${{ steps.notes.outputs.notes }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -73,6 +75,39 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # RELEASE_NOTES.md has a "# " section per version, newest first: the heading is the release title and the text
+      # up to the next "# " heading its description. The heading must name this version as a whole word, so notes for
+      # another version are never published by mistake. A release without its section stops here, before building.
+      - name: Read Release Notes
+        id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REQUESTED: ${{ steps.requested.outputs.requested }}
+          PUBLISHED: ${{ steps.release.outputs.published }}
+        run: |
+          number="${VERSION#v}"
+          pattern="(^|[^[:alnum:].+-])v?${number//./\\.}($|[^[:alnum:].+-])"
+          start=""
+          [ -f RELEASE_NOTES.md ] && start=$(grep -nE '^# ' RELEASE_NOTES.md | grep -E "$pattern" | head -n 1 | cut -d: -f1)
+          title="" body=""
+          if [ -n "$start" ]; then
+            title=$(sed -n "${start}s/^# *//p" RELEASE_NOTES.md)
+            body=$(tail -n +"$((start + 1))" RELEASE_NOTES.md | awk '/^# /{ exit } { print }' | sed -e '/./,$!d')
+            # Drop the "---" separator and blank lines before the next section.
+            while [[ "$body" == *$'\n---' || "$body" == '---' ]]; do body=$(printf '%s' "${body%---}"); done
+          fi
+          if [ -z "$body" ]; then
+            if [ "$REQUESTED" = "true" ] && [ "$PUBLISHED" != "true" ]; then
+              echo "::error::RELEASE_NOTES.md has no section for $VERSION. Add one whose heading names $number (e.g. \"# Incursion $number: ...\") and push again."
+              exit 1
+            fi
+            title="Incursion $VERSION"
+          fi
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          delimiter="NOTES_$(openssl rand -hex 12)"
+          { echo "notes<<$delimiter"; printf '%s\n' "$body"; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
+          if [ -n "$body" ]; then echo "::notice::Release notes for $VERSION: \"$title\" ($(printf '%s\n' "$body" | wc -l) lines)"; fi
 
   build:
     name: Build (${{ matrix.os }})
@@ -127,33 +162,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Checkout Release Notes
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          sparse-checkout: RELEASE_NOTES.md
-          sparse-checkout-cone-mode: false
-
-      # RELEASE_NOTES.md: its "# " heading is the release title, the rest the description. It is only used when the
-      # heading names this version, so notes from an earlier release are never reused by mistake.
-      - name: Prepare Release Notes
-        id: notes
+      - name: Write Release Notes
         env:
-          VERSION: ${{ needs.check.outputs.version }}
-        run: |
-          title="Incursion $VERSION"
-          : > notes.md
-          if [ -f RELEASE_NOTES.md ]; then
-            heading=$(grep -m1 '^# ' RELEASE_NOTES.md | sed 's/^# //')
-            number="${VERSION#v}"
-            if printf '%s' "$heading" | grep -Eq "(^|[^0-9.])${number//./\.}([^0-9.]|$)"; then
-              title="$heading"
-              awk 'seen { print } /^# / && !seen { seen = 1 }' RELEASE_NOTES.md | sed '/./,$!d' > notes.md
-            else
-              echo "::warning::RELEASE_NOTES.md is for another version (\"$heading\"), so this release has no description."
-            fi
-          fi
-          echo "title=$title" >> "$GITHUB_OUTPUT"
+          NOTES: ${{ needs.check.outputs.notes }}
+        run: printf '%s\n' "$NOTES" > notes.md
 
       - name: Download Builds
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -179,7 +191,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.check.outputs.version }}
-          name: ${{ steps.notes.outputs.title }}
+          name: ${{ needs.check.outputs.title }}
           body_path: notes.md
           draft: false
           prerelease: false

@@ -128,15 +128,29 @@ function slimMrVersion(v) {
 }
 
 // Mods match the loader too. Resource packs, shaders and data packs only match the game version.
-function pickCfIndex(slimMod, gameVersion, cfLoader, type = 'mod') {
+// A pack's release channel: 'beta' (the default) takes the newest release or beta, 'release' only releases. Alphas
+// are never picked by channel. Without strict, a project with nothing in the channel still gives its newest release,
+// or failing that its newest file, so it can be added at all; updates are always strict.
+const CHANNEL_TYPES = { beta: ['release', 'beta'], release: ['release'] };
+const channelTypes = (channel) => CHANNEL_TYPES[channel] || CHANNEL_TYPES.beta;
+const CF_TYPE = { 1: 'release', 2: 'beta', 3: 'alpha' };
+
+function pickCfIndex(slimMod, gameVersion, cfLoader, type = 'mod', { channel = 'beta', strict = false } = {}) {
     const matches = slimMod.indexes.filter((row) => content.cfIndexFits(type, row, gameVersion, cfLoader));
-    if (!matches.length) return null;
+    const allowed = channelTypes(channel);
+    const inChannel = matches.filter(i => allowed.includes(CF_TYPE[i[4]]));
     const releases = matches.filter(i => i[4] === 1);
-    const [, , fileId, filename, releaseType] = (releases.length ? releases : matches).reduce((a, b) => (b[2] > a[2] ? b : a));
+    const pool = inChannel.length ? inChannel : strict ? [] : (releases.length ? releases : matches);
+    if (!pool.length) return null;
+    const [, , fileId, filename, releaseType] = pool.reduce((a, b) => (b[2] > a[2] ? b : a));
     return { fileId, filename, releaseType };
 }
 
-const pickMrVersion = (versions) => versions.find(v => v.type === 'release') || versions[0] || null;
+// Modrinth lists versions newest first.
+function pickMrVersion(versions, { channel = 'beta', strict = false } = {}) {
+    const allowed = channelTypes(channel);
+    return versions.find(v => allowed.includes(v.type)) || (strict ? null : versions.find(v => v.type === 'release') || versions[0] || null);
+}
 
 async function mrProjects(idsOrSlugs, { ttl = 6 * HOUR, force = false } = {}) {
     const ids = unique(idsOrSlugs.filter(Boolean).map(String));
@@ -281,7 +295,9 @@ const api = {
     search: (params) => search(params),
     clearSearches: () => searchSessions.clear(),
 
-    async resolve({ platforms, gameVersion, loader, want = 'both', type = 'mod' }) {
+    async resolve({ platforms, gameVersion, loader, want = 'both', type = 'mod', channel = 'beta', strict = false }) {
+        const pick = { channel, strict };
+        const outside = (pl) => `Only beta or alpha ${pl} files exist for Minecraft ${gameVersion}. Switch the pack’s release channel to Beta to add it.`;
         const l = loaderInfo(loader);
         const out = { curseforge: null, modrinth: null, errors: [] };
 
@@ -289,8 +305,8 @@ const api = {
         if (platforms.modrinth && want !== 'curseforge') tasks.push((async () => {
             const v = platforms.modrinth.versionId
                 ? slimMrVersion(await mr(`/version/${platforms.modrinth.versionId}`))
-                : pickMrVersion(await mrVersionsFor(platforms.modrinth.id, gameVersion, l.id, { force: true, type }));
-            if (!v) return out.errors.push('No compatible Modrinth file');
+                : pickMrVersion(await mrVersionsFor(platforms.modrinth.id, gameVersion, l.id, { force: true, type }), pick);
+            if (!v) return out.errors.push(strict && pickMrVersion(await mrVersionsFor(platforms.modrinth.id, gameVersion, l.id, { type })) ? outside('Modrinth') : 'No compatible Modrinth file');
             const project = (await mrProjects([platforms.modrinth.id])).get(platforms.modrinth.id);
             out.modrinth = { version: v, project };
         })());
@@ -299,10 +315,10 @@ const api = {
             const mods = await cfMods([platforms.curseforge.id], { force: true });
             const m = mods.get(Number(platforms.curseforge.id));
             const exact = Number(platforms.curseforge.exactFileId) || null;
-            const idx = exact ? { fileId: exact } : m && pickCfIndex(m, gameVersion, l.cf, type);
+            const idx = exact ? { fileId: exact } : m && pickCfIndex(m, gameVersion, l.cf, type, pick);
             // The short "latest files" list can miss this version, so ask for its files directly.
-            const file = idx ? (await cfFiles([idx.fileId])).get(idx.fileId) : m && await cfLatestFile(m.id, gameVersion, loader, type, { force: true });
-            if (!m || !file) return out.errors.push('No compatible CurseForge file');
+            const file = idx ? (await cfFiles([idx.fileId])).get(idx.fileId) : m && await cfLatestFile(m.id, gameVersion, loader, type, { force: true, ...pick });
+            if (!m || !file) return out.errors.push(m && strict && await cfLatestFile(m.id, gameVersion, loader, type) ? outside('CurseForge') : 'No compatible CurseForge file');
             out.curseforge = { mod: m, file, blocked: !file.url };
         })());
         await Promise.all(tasks.map(t => t.catch(err => out.errors.push(err.message))));
@@ -341,7 +357,9 @@ const api = {
     //
     // retarget is for moving a pack to another Minecraft version: any different file counts (older ones too), and
     // `missing` lists the platforms with no usable file for that version. skip(mod, platform) leaves a platform out.
-    async checkUpdates({ mods, gameVersion, loader, hashOf, retarget = false, skip = () => false }, onProgress = () => {}) {
+    async checkUpdates({ mods, gameVersion, loader, hashOf, retarget = false, skip = () => false, channel = 'beta' }, onProgress = () => {}) {
+        const pick = { channel, strict: true };
+        const inChannel = (v) => channelTypes(channel).includes(v.type);
         const l = loaderInfo(loader);
         const updates = {};
         const missing = {};
@@ -372,16 +390,19 @@ const api = {
                 }
                 // Moving versions, most files have nothing for the target. A file Modrinth knows needs no slower per-mod
                 // lookup to prove that, so only unknown files fall back.
+                // The bulk lookup returns the newest file of any kind, so one outside the channel means asking for the
+                // project's versions instead.
+                for (const x of withHash) if (byHash[x.sha1] && !inChannel(slimMrVersion(byHash[x.sha1]))) { delete byHash[x.sha1]; x.outside = true; }
                 let known = new Set();
                 if (retarget) {
-                    for (const part of chunk(withHash.filter(x => !byHash[x.sha1]), 500)) {
+                    for (const part of chunk(withHash.filter(x => !byHash[x.sha1] && !x.outside), 500)) {
                         const res = await mr('/version_files', { method: 'POST', body: { hashes: part.map(x => x.sha1), algorithm: 'sha1' } });
                         for (const h of Object.keys(res || {})) known.add(h);
                     }
                 }
                 const fallback = hashed.filter(x => !x.sha1 || (!byHash[x.sha1] && !known.has(x.sha1)));
                 const fallbackVersions = await mapPool(fallback, 6, async x => {
-                    try { return pickMrVersion(await mrVersionsFor(x.m.ids.modrinth, gameVersion, l.id, { force: true, type: x.m.type })); }
+                    try { return pickMrVersion(await mrVersionsFor(x.m.ids.modrinth, gameVersion, l.id, { force: true, type: x.m.type }), pick); }
                     catch { return null; }
                 });
                 const latestFor = new Map();
@@ -412,14 +433,14 @@ const api = {
                 const noIndex = [];
                 for (const m of cfModsList) {
                     const cm = fresh.get(Number(m.ids.curseforge));
-                    const idx = cm && pickCfIndex(cm, gameVersion, l.cf, m.type);
+                    const idx = cm && pickCfIndex(cm, gameVersion, l.cf, m.type, pick);
                     if (!idx) { if (cm) noIndex.push(m); else if (retarget) lack(m, 'curseforge'); continue; }
                     const current = Number(m.meta?.cfFileId) || 0;
                     const changed = current ? (retarget ? idx.fileId !== current : idx.fileId > current) : idx.filename !== m.installedFiles.curseforge;
                     if (changed) candidates.push({ m, idx });
                 }
                 await mapPool(noIndex, 4, async (m) => {
-                    const f = await cfLatestFile(m.ids.curseforge, gameVersion, loader, m.type, { force: true }).catch(() => null);
+                    const f = await cfLatestFile(m.ids.curseforge, gameVersion, loader, m.type, { force: true, ...pick }).catch(() => null);
                     const current = Number(m.meta?.cfFileId) || 0;
                     if (!f) { if (retarget) lack(m, 'curseforge'); return; }
                     if (current ? (retarget ? f.id !== current : f.id > current) : f.fileName !== m.installedFiles.curseforge) candidates.push({ m, idx: { fileId: f.id, filename: f.fileName } });
@@ -585,18 +606,20 @@ const api = {
         return [...results.values()];
     },
 
-    async listVersions({ platform, id, gameVersion, loader, type = 'mod' }) {
+    // On the release channel only releases are listed.
+    async listVersions({ platform, id, gameVersion, loader, type = 'mod', channel = 'beta' }) {
         const l = loaderInfo(loader);
+        const shown = (v) => channel !== 'release' || v.type === 'release';
         if (platform === 'modrinth') {
             const list = await mrVersionsFor(id, gameVersion, l.id, { force: true, type });
-            return list.map(v => ({ id: v.id, label: v.number, type: v.type, date: v.date, fileName: v.fileName, size: v.size }));
+            return list.filter(shown).map(v => ({ id: v.id, label: v.number, type: v.type, date: v.date, fileName: v.fileName, size: v.size }));
         }
         const res = await cf(`/mods/${id}/files?${qs({ gameVersion, modLoaderType: content.typeOf(type).usesLoader ? l.cf : undefined, pageSize: 50 })}`);
         const types = { 1: 'release', 2: 'beta', 3: 'alpha' };
         return res.data.map(slimCfFile).map(f => {
             cache.set(`cf:file:${f.id}`, f);
             return { id: f.id, label: f.displayName, type: types[f.releaseType] || 'release', date: f.date, fileName: f.fileName, size: f.size, available: !!f.url };
-        }).sort((a, b) => new Date(b.date) - new Date(a.date));
+        }).filter(shown).sort((a, b) => new Date(b.date) - new Date(a.date));
     },
 
     async changelogs({ platform, id, gameVersion, loader, type = 'mod', offset = 0, limit = 6 }) {
@@ -1158,7 +1181,7 @@ function session(ctx, sort, kind, make, restart = false) {
     return s;
 }
 
-async function cfLatestFile(modId, gameVersion, loader, type = 'mod', { force = false } = {}) {
+async function cfLatestFile(modId, gameVersion, loader, type = 'mod', { force = false, channel = 'beta', strict = false } = {}) {
     const l = loaderInfo(loader);
     const t = content.typeOf(type);
     const files = await cache.wrap(`cf:files:${modId}:${gameVersion}:${t.usesLoader ? l.cf : ''}`, { ttl: 10 * MIN, force }, async () => {
@@ -1167,7 +1190,8 @@ async function cfLatestFile(modId, gameVersion, loader, type = 'mod', { force = 
     });
     for (const f of files) cache.set(`cf:file:${f.id}`, f);
     const fit = files.filter(f => f.url).sort((a, b) => new Date(b.date) - new Date(a.date));
-    return fit.find(f => f.releaseType === 1) || fit[0] || null;
+    const allowed = channelTypes(channel);
+    return fit.find(f => allowed.includes(CF_TYPE[f.releaseType])) || (strict ? null : fit.find(f => f.releaseType === 1) || fit[0] || null);
 }
 
 function modKey(m) { return String(m.ids.curseforge || m.ids.modrinth || m.ids.local); }
@@ -1175,6 +1199,7 @@ function modKey(m) { return String(m.ids.curseforge || m.ids.modrinth || m.ids.l
 api.modKey = modKey;
 api.targetOf = targetOf;
 api.pickCfIndex = pickCfIndex;
+api.pickMrVersion = pickMrVersion;
 api.slimCfMod = slimCfMod;
 api.matching = { sameProject, linkedCfSlug };
 module.exports = api;

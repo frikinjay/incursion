@@ -433,7 +433,7 @@ handle('packs:versions', async ({ path: p, key, platform }) => {
     const { meta } = await packs.load(p);
     const mod = meta.mods.find(m => api.modKey(m) === String(key));
     if (!mod?.ids[platform]) throw new Error('That mod is not on this platform.');
-    return api.listVersions({ platform, id: mod.ids[platform], gameVersion: meta.gameVersion, loader: meta.loader, type: mod.type });
+    return api.listVersions({ platform, id: mod.ids[platform], gameVersion: meta.gameVersion, loader: meta.loader, type: mod.type, channel: meta.releaseChannel === 'release' ? 'release' : 'beta' });
 });
 handle('packs:set-version', ({ path: p, key, platform, versionId, pin }) => packs.setVersion(p, key, { platform, versionId, pin }));
 handle('packs:mod-meta', ({ path: p, keys, patch }) => packs.modMeta(p, keys, patch));

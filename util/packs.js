@@ -15,6 +15,7 @@ const manual = require('./manual');
 const compat = require('./compat');
 
 const { modKey } = api;
+const channelOf = (meta) => (meta.releaseChannel === 'release' ? 'release' : 'beta');
 const log = require('./log').scope('packs');
 const AUTO_CHECK_AFTER = 30 * 60 * 1000;
 const AUTO_SYNC_AFTER = 24 * 3600 * 1000;
@@ -299,7 +300,8 @@ class PackService {
 
     async updateInfo(packPath, fields) {
         const s = await this._get(packPath);
-        const allowed = ['name', 'version', 'author', 'description', 'loaderVersion', 'icon', 'gameVersion', 'loader', 'launch', 'links', 'license', 'tags', 'publish', 'profiles', 'linkPolicy', 'releaseOptions'];
+        const allowed = ['name', 'version', 'author', 'description', 'loaderVersion', 'icon', 'gameVersion', 'loader', 'launch', 'links', 'license', 'tags', 'publish', 'profiles', 'linkPolicy', 'releaseOptions', 'releaseChannel'];
+        if (fields.releaseChannel !== undefined) fields = { ...fields, releaseChannel: fields.releaseChannel === 'release' ? 'release' : 'beta' };
         if (fields.linkPolicy !== undefined) { fields = { ...fields, linkPolicy: fields.linkPolicy === 'local' ? 'local' : 'pack' }; api.clearSearches(); }
         if (fields.releaseOptions !== undefined) fields = { ...fields, releaseOptions: { trackConfigs: fields.releaseOptions?.trackConfigs !== false } };
         if (fields.profiles !== undefined) fields = { ...fields, profiles: profiles.clean(fields.profiles, s.meta) };
@@ -338,7 +340,7 @@ class PackService {
                     return;
                 }
                 item = { ...item, platforms };
-                const resolved = await api.resolve({ platforms: item.platforms, gameVersion: meta.gameVersion, loader: meta.loader, type: item.type });
+                const resolved = await api.resolve({ platforms: item.platforms, gameVersion: meta.gameVersion, loader: meta.loader, type: item.type, channel: channelOf(meta), strict: true });
                 if (!resolved.curseforge && !resolved.modrinth) throw new Error(resolved.errors.join('; ') || 'No compatible files');
                 const entry = api.toEntry(resolved, { title: item.title, author: item.author, mrAuthor: item.platforms.modrinth?.author, env: item.env, summary: item.summary, type: item.type });
                 await this._downloadEntry(packPath, entry);
@@ -518,7 +520,7 @@ class PackService {
             const t = quiet ? null : task('Checking for Updates');
             const hashOf = this._hashOf(packPath);
             try {
-                const res = await api.checkUpdates({ mods, gameVersion: s.meta.gameVersion, loader: s.meta.loader, hashOf }, (pct) => t?.update(pct / 100));
+                const res = await api.checkUpdates({ mods, gameVersion: s.meta.gameVersion, loader: s.meta.loader, hashOf, channel: channelOf(s.meta) }, (pct) => t?.update(pct / 100));
                 if (keys) { for (const k of keys) delete s.pending.updates[k]; Object.assign(s.pending.updates, res.updates); }
                 else s.pending.updates = res.updates;
                 s.pending.checkedAt = res.checkedAt;
@@ -623,7 +625,7 @@ class PackService {
             const t = task(dryRun ? `Checking Mods for ${gameVersion}` : `Moving to Minecraft ${gameVersion}`);
             try {
                 const res = sameGame ? { updates: {}, missing: {}, errors: [] } : await api.checkUpdates({
-                    mods: tracked, gameVersion, loader: meta.loader, hashOf: this._hashOf(packPath), retarget: true,
+                    mods: tracked, gameVersion, loader: meta.loader, hashOf: this._hashOf(packPath), retarget: true, channel: channelOf(meta),
                     skip: (m, pl) => manual.isManual(m, pl)
                 }, (pct) => t.update(dryRun ? pct / 100 : pct / 400));
                 if (res.errors.length) throw new Error(`Couldn’t check every mod: ${res.errors.join(' · ')}`);
@@ -908,7 +910,7 @@ class PackService {
 
     async _addPlatform(packPath, s, mod, pl, id) {
         const oldKey = modKey(mod);
-        const r = await api.resolve({ platforms: { [pl]: { id } }, gameVersion: s.meta.gameVersion, loader: s.meta.loader, want: pl, type: mod.type });
+        const r = await api.resolve({ platforms: { [pl]: { id } }, gameVersion: s.meta.gameVersion, loader: s.meta.loader, want: pl, type: mod.type, channel: channelOf(s.meta), strict: true });
         if (!r[pl]) throw new Error(r.errors[0] || `No compatible ${pl === 'modrinth' ? 'Modrinth' : 'CurseForge'} file for this pack.`);
         const part = api.toEntry(r, { type: mod.type });
         const before = mod.installedFiles?.[pl];

@@ -571,7 +571,19 @@
             h('label.label', 'When This Pack and You Disagree, Use'), policySeg,
             linksBody);
 
+        // Which mod files updates, Add Content and Change Version offer. Changing it checks for updates again.
+        const channelSeg = UI.segmented([{ value: 'beta', label: 'Releases and Betas' }, { value: 'release', label: 'Releases Only' }], m.releaseChannel === 'release' ? 'release' : 'beta',
+            (v) => call('packs:info', { path: m.path, fields: { releaseChannel: v } })
+                .then(() => call('packs:check', { path: m.path }))
+                .then(r => UI.Island.toast(v === 'release' ? 'Releases Only' : 'Releases and Betas', r.count ? fmt.plural(r.count, 'update') + ' available' : 'Everything is up to date'))
+                .catch(UI.Island.error));
+
         container.append(h('div.cards',
+            h('section.card',
+                h('h3', 'Mod Versions'),
+                h('p', 'Which files updates, Add Content and Change Version offer, on both CurseForge and Modrinth.'),
+                h('label.label', 'Release Channel'), channelSeg,
+                h('p.hint', 'Releases and Betas offers the newest stable or beta file. Releases Only never offers betas; a mod that only has betas can’t be added until you switch. Alpha files are never offered.')),
             h('section.card',
                 h('h3', 'Launch'),
                 h('p', 'How Minecraft starts for this pack. Other packs keep their own settings.'),

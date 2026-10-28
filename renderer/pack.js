@@ -153,7 +153,9 @@
                     m.version ? h('span.chip', `v${m.version}`) : null);
                 desc.textContent = m.description || '';
                 desc.classList.toggle('hidden', !m.description);
-                const updates = Object.keys(snap.updates).length;
+                // Count only mods still in the pack, the same ones the Updates filter can show.
+                const present = new Set(m.mods.map(modKey));
+                const updates = Object.keys(snap.updates).filter(k => present.has(k)).length;
                 const checking = snap.busy.includes('check');
                 const applying = snap.busy.includes('apply');
                 updatesBtn.className = `btn lg${updates ? ' green' : ''}`;
@@ -384,10 +386,24 @@
 
         function emptyContent() {
             if (!snap.meta.mods.length) return [h('div.art', icon('sparkle')), h('h3', 'This Pack Is Empty'), h('p', `Add mods, resource packs, shaders and data packs for Minecraft ${snap.meta.gameVersion} on ${LOADERS[snap.meta.loader]}.`), h('button.btn.primary', { on: { click: () => Browse.open(snap) } }, icon('plus'), 'Add Content')];
-            if (ui.filter === 'updates') return [h('div.art', icon('check')), h('h3', 'Everything Is Up to Date'), h('p', snap.checkedAt ? `Checked ${fmt.ago(snap.checkedAt)}.` : 'Check for updates to see what changed.')];
-            if (ui.filter === 'missing') return [h('div.art', icon('check')), h('h3', 'All Files Are Present'), h('p', 'Every mod file this pack lists is in its folder.')];
-            if (ui.filter === 'pinned') return [h('div.art', icon('pin')), h('h3', 'No Pinned Content'), h('p', 'Pin a mod to keep its current version when you update everything else.')];
-            return [h('h3', 'No Matching Content'), h('p', 'Try a different filter or search.')];
+            // The "all clear" messages only when the category itself is empty, not when the search or other filters hide it.
+            const keys = new Set(snap.meta.mods.map(modKey));
+            const inCategory = {
+                updates: Object.keys(snap.updates).filter(k => keys.has(k)).length,
+                missing: Object.keys(snap.missing).filter(k => keys.has(k)).length,
+                pinned: snap.meta.mods.filter(m => m.pinned).length,
+                incompatible: Object.keys(snap.compat || {}).filter(k => keys.has(k)).length
+            }[ui.filter] || 0;
+            if (!inCategory) {
+                if (ui.filter === 'updates') return [h('div.art', icon('check')), h('h3', 'Everything Is Up to Date'), h('p', snap.checkedAt ? `Checked ${fmt.ago(snap.checkedAt)}.` : 'Check for updates to see what changed.')];
+                if (ui.filter === 'missing') return [h('div.art', icon('check')), h('h3', 'All Files Are Present'), h('p', 'Every mod file this pack lists is in its folder.')];
+                if (ui.filter === 'pinned') return [h('div.art', icon('pin')), h('h3', 'No Pinned Content'), h('p', 'Pin a mod to keep its current version when you update everything else.')];
+                if (ui.filter === 'incompatible') return [h('div.art', icon('check')), h('h3', 'Everything Fits'), h('p', `Every file is made for Minecraft ${snap.meta.gameVersion} and ${LOADERS[snap.meta.loader]} ${snap.meta.loaderVersion || ''}`.trim() + '.')];
+            }
+            const what = { updates: ['update', 'updates'], missing: ['missing file', 'missing files'], pinned: ['pinned item', 'pinned items'], incompatible: ['incompatible mod', 'incompatible mods'] }[ui.filter];
+            return [h('h3', 'No Matching Content'), h('p', what
+                ? `${inCategory} ${what[inCategory === 1 ? 0 : 1]} ${inCategory === 1 ? 'doesn’t' : 'don’t'} match your search or filters.`
+                : 'Try a different filter or search.')];
         }
 
         const rowSig = (m) => {
