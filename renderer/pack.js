@@ -732,14 +732,20 @@
                     const current = platform === 'modrinth' ? m.meta?.mrVersionId : Number(m.meta?.cfFileId);
                     list.replaceChildren(...versions.map(v => {
                         const isCur = String(v.id) === String(current);
-                        const btn = h(`button.btn.sm${isCur ? '.ghost' : '.tinted'}`, { disabled: isCur || v.available === false }, isCur ? 'Installed' : v.available === false ? 'Unavailable' : 'Install');
+                        // The author keeps these out of apps: picking one makes the mod wait for that file, which you
+                        // download from CurseForge and choose in the mod's details.
+                        const byHand = v.available === false;
+                        const idle = isCur ? 'Installed' : byHand ? 'Download…' : 'Install';
+                        const btn = h(`button.btn.sm${isCur ? '.ghost' : '.tinted'}`, { disabled: isCur, title: byHand ? 'Its author doesn’t allow apps to download it. CurseForge’s page downloads it inside Incursion, and the file goes into the pack by itself.' : '' }, idle);
                         btn.addEventListener('click', async () => {
                             btn.disabled = true; btn.replaceChildren(h('span.spinner'));
                             try {
-                                await call('packs:set-version', { path: snap.meta.path, key: k, platform, versionId: v.id, pin: pin.get() });
-                                UI.Island.toast('Version Changed', v.label);
+                                const next = await call('packs:set-version', { path: snap.meta.path, key: k, platform, versionId: v.id, pin: pin.get() });
+                                const waiting = byHand && next?.meta?.mods.find(x => modKey(x) === k)?.manual?.curseforge;
                                 d.close();
-                            } catch (err) { UI.Island.error(err); btn.disabled = false; btn.replaceChildren('Install'); }
+                                if (waiting && !waiting.sha1) CfDownload.start(snap.meta.path, k, waiting.expectedFile);
+                                else UI.Island.toast('Version Changed', v.label);
+                            } catch (err) { UI.Island.error(err); btn.disabled = false; btn.replaceChildren(idle); }
                         });
                         return h(`div.ver${isCur ? '.current' : ''}`,
                             h('div', { style: { minWidth: 0 } }, h('div.n.ellipsis', v.label), h('div.f.ellipsis', v.fileName)),
@@ -783,8 +789,11 @@
                 const r = m.manual?.[pl];
                 if (st === 'platform' || isLocal(m)) return null;
                 if (st === 'pending') return [h('div.group-title', label), h('div.group',
-                    h('div.cell.col', h('div.t', 'Download Needed'), h('div.d', `The author doesn’t allow apps to download this mod. Download ${r.expectedFile} from CurseForge, then choose that file here.`)),
-                    h('div.cell.btns', btn('Open Download Page', () => call('shell:open', { url: r.page }).catch(UI.Island.error)), btn('Choose Downloaded File…', () => useFile(pl, 'file'), '.primary')))];
+                    h('div.cell.col', h('div.t', 'Download Needed'), h('div.d', `The author doesn’t allow apps to download this mod, so CurseForge’s own page downloads ${r.expectedFile}. It lands in your Downloads folder and Incursion moves it into the pack by itself${r.expectedSha1 ? ' once it matches the file CurseForge lists' : ''}.`)),
+                    h('div.cell.btns',
+                        btn('Download', () => CfDownload.start(path, k, r.expectedFile), '.primary'),
+                        btn('Open in Browser', () => CfDownload.start(path, k, r.expectedFile, { browser: true })),
+                        btn('Choose File…', () => useFile(pl, 'file'))))];
                 if (st === 'manual') {
                     const from = PL_NAME[r.from];
                     const old = copyOutdated(m, pl);

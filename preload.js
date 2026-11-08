@@ -19,7 +19,7 @@ const CHANNELS = new Set([
     'cfservice:status', 'cfservice:set', 'cfservice:verify', 'cfservice:forget',
     'backups:list', 'backups:create', 'backups:restore', 'backups:delete', 'backups:reveal',
     'packs:versions', 'packs:set-version', 'packs:mod-meta', 'packs:disable', 'packs:deps', 'packs:release', 'packs:merge',
-    'packs:untracked', 'packs:untracked-refresh', 'packs:adopt', 'packs:pick-local', 'packs:add-local', 'packs:trash-jars', 'packs:manual-file', 'packs:manual-remove',
+    'packs:untracked', 'packs:untracked-refresh', 'packs:adopt', 'packs:pick-local', 'packs:add-local', 'packs:trash-jars', 'packs:manual-file', 'packs:manual-remove', 'packs:manual-download', 'packs:manual-download-cancel',
     'import:pick', 'import:link', 'import:run',
     'files:list', 'files:read', 'files:write', 'files:create', 'files:rename', 'files:delete', 'files:reveal', 'files:to-overrides',
     'publish:check', 'publish:run', 'publish:server', 'packs:server-preview',

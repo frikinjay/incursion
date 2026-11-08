@@ -1,3 +1,14 @@
+# Incursion 2.10.2: CurseForge Downloads When Moving Packs
+
+## Fixes
+- Moving a pack to another loader or Minecraft version no longer leaves CurseForge files that apps can't download (like Gouge) on the old loader's jar. They switch to the right file and show "Download Needed" until it's downloaded.
+- Those CurseForge versions show a Download button in the versions list instead of "Unavailable".
+- **Downloads CurseForge blocks for apps, inside Incursion.** Press Download on a mod that needs one and CurseForge's own download page opens in Incursion. The file saves to your Downloads folder as usual, and once its name and SHA-1 match the file CurseForge lists, Incursion moves it into the pack and closes the page.
+- Files downloaded in your regular browser are picked up too. Incursion watches your Downloads folder while a pack waits for a file, and checks it whenever a pack with a pending download opens. Nothing else in Downloads is touched, and a file that doesn't match stays where it is.
+- Hand-added jars made for the other loader are flagged as incompatible on their own platform.
+
+---
+
 # Incursion 2.10.1: Update Fixes
 
 ## Fixes

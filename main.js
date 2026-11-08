@@ -29,6 +29,7 @@ const importer = require('./util/importer');
 const publisher = require('./util/publish');
 const env = require('./util/env');
 const webpage = require('./util/webpage');
+const cfdownloads = require('./util/cfdownloads');
 const backups = require('./util/backups');
 const profiles = require('./util/profiles');
 const scheduler = require('./util/scheduler');
@@ -179,6 +180,37 @@ const send = (type, payload) => { if (win && !win.isDestroyed() && !win.webConte
 packs.setEmitter(send);
 downloads.setEmitter(send);
 webpage.setEmitter(send);
+
+// A blocked CurseForge file still waiting in a pack: { mod, record } or null.
+async function pendingDownload(packPath, key) {
+    const meta = await packs.metaOf(packPath);
+    const mod = meta.mods.find(m => api.modKey(m) === String(key));
+    const record = mod?.manual?.curseforge;
+    return record?.from === 'download' && !record.sha1 ? { mod, record, meta } : null;
+}
+const expectationOf = (packPath, mod, record) => ({
+    packPath, key: api.modKey(mod), title: mod.names?.curseforge || mod.names?.modrinth || record.expectedFile,
+    fileName: record.expectedFile, sha1: record.expectedSha1 || null, fileId: mod.meta?.cfFileId || null
+});
+cfdownloads.init({
+    downloadsDir: () => app.getPath('downloads'),
+    emit: send,
+    // The pack may have changed since the download started (another version picked, the file added by hand).
+    place: async (e, file) => {
+        const p = await pendingDownload(e.packPath, e.key);
+        if (!p || p.record.expectedFile !== e.fileName) return false;
+        await packs.setManualFile(e.packPath, e.key, 'curseforge', { source: 'file', file, name: e.fileName });
+        return true;
+    }
+});
+// Pending downloads CurseForge lists a SHA-1 for are picked up from Downloads as soon as the pack is open, even when
+// the file was downloaded in a regular browser.
+function expectPending(packPath, meta) {
+    for (const m of meta.mods) {
+        const r = m.manual?.curseforge;
+        if (r?.from === 'download' && !r.sha1 && r.expectedSha1) cfdownloads.expect(expectationOf(packPath, m, r));
+    }
+}
 nativeTheme.on('updated', () => {
     if (win && !isMac) win.setTitleBarOverlay(overlayColors());
     send('theme', { dark: nativeTheme.shouldUseDarkColors });
@@ -423,7 +455,21 @@ handle('packs:import', async () => {
     return packs.import(r.filePaths[0]);
 });
 handle('packs:forget', ({ path: p }) => packs.forget(p));
-handle('packs:load', ({ path: p }) => packs.load(p));
+handle('packs:load', async ({ path: p }) => {
+    const snap = await packs.load(p);
+    try { expectPending(p, snap.meta); } catch (err) { log.warn('Couldn’t look for pending downloads:', err.message); }
+    return snap;
+});
+// Opens the file's CurseForge download page in the viewer; the download then goes into the pack by itself.
+handle('packs:manual-download', async ({ path: p, key }) => {
+    const pending = await pendingDownload(p, key);
+    if (!pending) throw new Error('That file is already in the pack.');
+    cfdownloads.expect(expectationOf(p, pending.mod, pending.record));
+    const url = String(pending.record.page || '').replace(/\/files\/(\d+)\/?$/, '/download/$1');
+    if (!webpage.allowed(url)) throw new Error('This mod has no CurseForge download page.');
+    return { url, fileName: pending.record.expectedFile };
+});
+handle('packs:manual-download-cancel', ({ path: p, key }) => { cfdownloads.forget(p, key); return true; });
 handle('packs:info', ({ path: p, fields }) => packs.updateInfo(p, fields));
 handle('packs:retarget', async ({ path: p, gameVersion, loader, loaderVersion, dryRun }) => {
     if (!dryRun && launcher.packBusy(p)) throw new Error('Close the game before changing the pack’s Minecraft version or loader.');
@@ -707,6 +753,7 @@ app.whenReady().then(async () => {
         return net.fetch(pathToFileURL(path.join(bgDir, name)).toString());
     });
     await applyKeys();
+    cfdownloads.attach(session.fromPartition('persist:platform-pages'));
     cfproxy.init({ userData, parent: () => win, hiddenWindows: !!process.env.INCURSION_HIDDEN });
     await applyCfService();
     applyLinkPrefs(await prefs());

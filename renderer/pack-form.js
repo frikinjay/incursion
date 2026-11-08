@@ -112,6 +112,7 @@
                 const to = plan.target;
                 const parts = [`${fmt.plural(plan.moving, 'mod')} will switch to ${plan.moving === 1 ? 'its' : 'their'} files for ${to}${plan.unchanged ? ` (${plan.unchanged} already work)` : ''}, with ${LOADERS[plan.loader]} ${plan.loaderVersion}.`];
                 if (plan.missing.length) parts.push(`${fmt.plural(plan.missing.length, 'mod')} ${plan.missing.length === 1 ? 'has' : 'have'} no file for ${to} and will be turned off and marked incompatible: ${listOf(plan.missing.map(m => m.title))}.`);
+                if (plan.toDownload?.length) parts.push(`${fmt.plural(plan.toDownload.length, 'mod')} can’t be downloaded by apps on CurseForge, so you’ll download ${plan.toDownload.length === 1 ? 'its file' : 'their files'} yourself afterwards: ${listOf(plan.toDownload)}.`);
                 if (plan.handAdded.length) parts.push(`Files added by hand stay as they are, so check them yourself: ${listOf(plan.handAdded)}.`);
                 parts.push('Nothing changes if a download fails.');
                 const ok = await UI.confirm({ title: `Move ${meta.name} to ${to}?`, message: parts.join(' '), confirmLabel: 'Move Pack' });

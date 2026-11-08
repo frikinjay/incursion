@@ -450,8 +450,13 @@ const api = {
                 const files = await cfFiles(candidates.map(c => c.idx.fileId));
                 for (const { m, idx } of candidates) {
                     const f = files.get(idx.fileId);
-                    // A file its author keeps out of apps can't be fetched, so for a move it counts as missing.
-                    if (!f || !f.url) { if (retarget) lack(m, 'curseforge'); continue; }
+                    if (!f) { if (retarget) lack(m, 'curseforge'); continue; }
+                    // A file its author keeps out of apps can't be fetched. A move still switches to it, as a download
+                    // the user makes by hand; an ordinary update check leaves it alone.
+                    if (!f.url) {
+                        if (retarget) put(m, 'curseforge', { blocked: true, fileName: f.fileName, fileId: f.id, displayName: f.displayName, date: f.date, sha1: f.sha1, size: f.size, deps: f.deps, incompat: f.incompat, env: f.env, target: targetOf(f), from: m.meta?.cfDisplayName || m.installedFiles.curseforge });
+                        continue;
+                    }
                     put(m, 'curseforge', {
                         fileName: f.fileName, url: f.url, fileId: f.id, displayName: f.displayName, date: f.date,
                         sha1: f.sha1, size: f.size, deps: f.deps, env: f.env, target: targetOf(f),
