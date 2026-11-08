@@ -7,6 +7,7 @@
     async function start(packPath, key, fileName, { browser = false } = {}) {
         try {
             const r = await call('packs:manual-download', { path: packPath, key });
+            if (r.already) { UI.Island.toast('Already in the Pack', r.fileName || fileName); return; }
             if (browser) {
                 await call('shell:open', { url: r.url });
                 UI.Island.toast('Download in Your Browser', `${r.fileName} goes into the pack once it’s in Downloads`);

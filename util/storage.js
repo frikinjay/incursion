@@ -13,7 +13,7 @@ const downloadLog = require('./log').scope('download');
 const { loaderInfo } = require('./loaders');
 
 let dirs = { userData: null };
-let secrets = { encrypt: (s) => s, decrypt: (s) => s, available: false };
+let secrets = { encrypt: async (s) => s, decrypt: async (s) => s, available: false };
 
 const p = (name) => path.join(dirs.userData, name);
 const writeQueues = new Map();
@@ -125,7 +125,7 @@ const storage = {
         let legacy = false;
         for (const k of storage.SECRET_KEYS) {
             out[k] = '';
-            if (raw[`${k}Enc`]) { try { out[k] = secrets.decrypt(raw[`${k}Enc`]); } catch { out[k] = ''; } }
+            if (raw[`${k}Enc`]) { try { out[k] = await secrets.decrypt(raw[`${k}Enc`]); } catch { out[k] = ''; } }
             else if (raw[k]) { out[k] = raw[k]; legacy = true; }   // old plaintext value, re-saved encrypted below
         }
         if (legacy && secrets.available) await storage.saveSettings(out);
@@ -138,10 +138,10 @@ const storage = {
         for (const k of storage.SECRET_KEYS) {
             let value;
             if (typeof next[k] === 'string') value = next[k];
-            else if (current[`${k}Enc`]) { try { value = secrets.decrypt(current[`${k}Enc`]); } catch { value = ''; } }
+            else if (current[`${k}Enc`]) { try { value = await secrets.decrypt(current[`${k}Enc`]); } catch { value = ''; } }
             else value = current[k] || '';
             if (!value) continue;
-            if (secrets.available) out[`${k}Enc`] = secrets.encrypt(value); else out[k] = value;
+            if (secrets.available) out[`${k}Enc`] = await secrets.encrypt(value); else out[k] = value;
         }
         await writeJsonAtomic(p('settings.json'), out);
         return { success: true };

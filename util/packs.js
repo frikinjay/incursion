@@ -24,6 +24,9 @@ const AUTO_SYNC_AFTER = 24 * 3600 * 1000;
 
 let emit = () => {};
 let taskSeq = 0;
+// Every snapshot gets a higher number, so the renderer can tell which of two is newer: a load's reply can arrive
+// after an update that was sent later.
+let snapshotRev = 0;
 
 function task(label) {
     const id = `t${++taskSeq}`;
@@ -311,6 +314,7 @@ class PackService {
 
     snapshot(s) {
         return {
+            rev: ++snapshotRev,
             meta: s.meta,
             updates: s.pending.updates,
             checkedAt: s.pending.checkedAt || 0,

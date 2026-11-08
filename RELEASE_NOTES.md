@@ -1,3 +1,16 @@
+# Incursion 3.0.0: Electron 45
+
+## Highlights
+- **Built on Electron 45** (from 42), with the latest Chromium and Node.js security fixes. The app's own dependencies have no known vulnerabilities.
+- **Saved keys and Minecraft logins use the new OS keychain calls.** The old ones go away in the next Electron. Everything you saved before still works, with nothing to re-enter.
+- **Release builds run on Node.js 26 LTS** with the latest GitHub Actions, all on Node 24, so the deprecation warnings are gone.
+
+## Fixes
+- A pack could show stale information right after opening, such as "Download Needed" for a file already in the pack, when a change landed while the page was still loading. The newest state now always wins.
+- Pressing Download for a file that's already in the pack says so instead of showing an error.
+
+---
+
 # Incursion 2.10.2: CurseForge Downloads When Moving Packs
 
 ## Fixes

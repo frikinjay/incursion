@@ -47,16 +47,16 @@ async function readAccounts() {
         const raw = await fs.readJson(accountsFile);
         return {
             active: raw.active || null,
-            list: (raw.list || []).map(a => {
-                try { return JSON.parse(secrets.available ? secrets.decrypt(a.enc) : a.enc); } catch { return null; }
-            }).filter(Boolean)
+            list: (await Promise.all((raw.list || []).map(async a => {
+                try { return JSON.parse(secrets.available ? await secrets.decrypt(a.enc) : a.enc); } catch { return null; }
+            }))).filter(Boolean)
         };
     } catch { return { active: null, list: [] }; }
 }
 async function writeAccounts({ active, list }) {
     await storage.writeJsonAtomic(accountsFile, {
         active,
-        list: list.map(a => ({ uuid: a.uuid, enc: secrets.available ? secrets.encrypt(JSON.stringify(a)) : JSON.stringify(a) }))
+        list: await Promise.all(list.map(async a => ({ uuid: a.uuid, enc: secrets.available ? await secrets.encrypt(JSON.stringify(a)) : JSON.stringify(a) })))
     });
 }
 const publicAccount = (a) => a && ({ uuid: a.uuid, name: a.name, type: a.meta?.type || 'msa', avatar: `https://mc-heads.net/avatar/${a.uuid}/64` });

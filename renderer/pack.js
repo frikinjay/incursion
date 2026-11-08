@@ -486,7 +486,7 @@
 
         const rowSig = (m) => {
             const k = modKey(m);
-            return `${m.meta?.mrVersionId}|${m.meta?.cfFileId}|${JSON.stringify(Object.entries(snap.updates[k] || {}).map(([pl, u]) => [pl, u.versionId || u.fileId]))}|${!!snap.missing[k]}|${modTitle(m)}|${modIcon(m)}|${m.pinned}|${m.side}|${!!m.disabled}|${selecting}|${selected.has(k)}|${JSON.stringify(snap.compat?.[k] || null)}|${JSON.stringify(licenseOf(m))}|${folderOf(snap.meta, m)}`;
+            return `${m.meta?.mrVersionId}|${m.meta?.cfFileId}|${JSON.stringify(Object.entries(snap.updates[k] || {}).map(([pl, u]) => [pl, u.versionId || u.fileId]))}|${!!snap.missing[k]}|${modTitle(m)}|${modIcon(m)}|${m.pinned}|${m.side}|${!!m.disabled}|${selecting}|${selected.has(k)}|${JSON.stringify(snap.compat?.[k] || null)}|${JSON.stringify(licenseOf(m))}|${folderOf(snap.meta, m)}|${['modrinth', 'curseforge'].map(pl => sideState(m, pl)).join(',')}`;
         };
 
         function buildRow(m) {

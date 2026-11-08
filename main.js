@@ -51,10 +51,14 @@ let win = null;
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'incursion', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 
+// The async safeStorage calls use the same OS key stores as the old sync ones (gone in Electron 46), so values saved
+// by earlier versions still decrypt. Availability is looked up once after app ready.
+let encryptionReady = false;
 const secretBox = {
-    get available() { return safeStorage.isEncryptionAvailable(); },
-    encrypt: (s) => safeStorage.encryptString(s).toString('base64'),
-    decrypt: (s) => safeStorage.decryptString(Buffer.from(s, 'base64'))
+    async init() { try { encryptionReady = await safeStorage.isAsyncEncryptionAvailable(); } catch { encryptionReady = false; } },
+    get available() { return encryptionReady; },
+    encrypt: async (s) => (await safeStorage.encryptStringAsync(s)).toString('base64'),
+    decrypt: async (s) => (await safeStorage.decryptStringAsync(Buffer.from(s, 'base64'))).result
 };
 
 async function tokens() {
@@ -463,7 +467,12 @@ handle('packs:load', async ({ path: p }) => {
 // Opens the file's CurseForge download page in the viewer; the download then goes into the pack by itself.
 handle('packs:manual-download', async ({ path: p, key }) => {
     const pending = await pendingDownload(p, key);
-    if (!pending) throw new Error('That file is already in the pack.');
+    if (!pending) {
+        const meta = await packs.metaOf(p);
+        const mod = meta.mods.find(m => api.modKey(m) === String(key));
+        if (mod?.manual?.curseforge?.sha1) return { already: true, fileName: mod.installedFiles?.curseforge };
+        throw new Error('That mod no longer waits for a CurseForge download.');
+    }
     cfdownloads.expect(expectationOf(p, pending.mod, pending.record));
     const url = String(pending.record.page || '').replace(/\/files\/(\d+)\/?$/, '/download/$1');
     if (!webpage.allowed(url)) throw new Error('This mod has no CurseForge download page.');
@@ -737,6 +746,7 @@ app.whenReady().then(async () => {
     log.info(`Incursion ${app.getVersion()} starting (Electron ${process.versions.electron}, ${process.platform} ${process.arch}, ${require('os').release()})`);
     session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'clipboard-sanitized-write'));
     const userData = app.getPath('userData');
+    await secretBox.init();
     const { cacheFile } = storage.init(userData, secretBox);
     const theme = (await storage.getSettings()).theme || 'system';
     showSplash(theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors));

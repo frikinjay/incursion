@@ -8,10 +8,15 @@
     // The last few packs' snapshots, newest last, so going back to one shows it at once. Kept small: each can be 1 MB.
     const snapshots = new Map();
     const SNAPSHOTS_KEPT = 4;
+    // Keeps whichever of the known and the given snapshot is newer and returns it. A load's reply (or a prefetch a few
+    // seconds old) must never replace an update main sent after it.
     const remember = (p, snap) => {
+        const known = snapshots.get(p);
+        const keep = known && (known.rev || 0) > (snap.rev || 0) ? known : snap;
         snapshots.delete(p);
-        snapshots.set(p, snap);
+        snapshots.set(p, keep);
         while (snapshots.size > SNAPSHOTS_KEPT) snapshots.delete(snapshots.keys().next().value);
+        return keep;
     };
     // A load started on hover or press, picked up by the click that usually follows.
     const prefetched = new Map();
@@ -53,10 +58,10 @@
             if (route.name === 'pack') {
                 const load = App.prefetch(route.path);
                 if (snapshots.has(route.path)) {
-                    load.then((fresh) => {
-                        remember(route.path, fresh);
+                    load.then((reply) => {
+                        const fresh = remember(route.path, reply);
                         const now = state.get().route;
-                        if (now.name === 'pack' && now.path === route.path) { state.set({ snapshot: fresh }); currentView?.update?.(fresh); }
+                        if (fresh === reply && now.name === 'pack' && now.path === route.path) { state.set({ snapshot: fresh }); currentView?.update?.(fresh); }
                     }).catch(UI.Island.error);
                 } else {
                     try { remember(route.path, await load); }
@@ -156,9 +161,10 @@
         else if (type === 'downloads') UI.Downloads.update(payload.items);
         else if (type === 'update') Updates.update(payload);
         else if (type === 'pack') {
-            if (snapshots.has(payload.meta.path)) remember(payload.meta.path, payload);
+            // Always kept, even for a pack whose load hasn't come back yet, so that reply can't bring back older state.
+            const kept = remember(payload.meta.path, payload);
             const { route } = state.get();
-            if (route.name === 'pack' && route.path === payload.meta.path) {
+            if (kept === payload && route.name === 'pack' && route.path === payload.meta.path) {
                 state.set({ snapshot: payload });
                 currentView?.update?.(payload);
             }
