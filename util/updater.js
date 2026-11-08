@@ -107,10 +107,13 @@ async function sha256(file) {
     return hash.digest('hex');
 }
 
+// SHA256SUMS.txt lists the files as built ("Incursion Setup 2.9.4.exe"), but GitHub turns spaces in uploaded names
+// into dots ("Incursion.Setup.2.9.4.exe").
 function expectedSum(text, name) {
+    const asUploaded = (n) => n.trim().replace(/ /g, '.');
     for (const line of String(text).split(/\r?\n/)) {
         const m = /^([a-f0-9]{64})\s+\*?(.+)$/i.exec(line.trim());
-        if (m && m[2].trim() === name) return m[1].toLowerCase();
+        if (m && asUploaded(m[2]) === asUploaded(name)) return m[1].toLowerCase();
     }
     return null;
 }

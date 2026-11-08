@@ -1,3 +1,11 @@
+# Incursion 2.10.1: Update Fixes
+
+## Fixes
+- Windows updates now find their checksum. GitHub renames the installer when it's uploaded (spaces become dots), which would have made every Windows update fail its check.
+- Release builds verify Electron against the checksums that ship with it and keep their downloads between runs, and a build that fails on a download is retried, so short GitHub outages don't stop a release.
+
+---
+
 # Incursion 2.10.0: App Updates, Duplicate Packs and Loader Changes
 
 ## Highlights

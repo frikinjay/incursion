@@ -1,6 +1,6 @@
 {
   "name": "incursion",
-  "version": "2.10.0",
+  "version": "2.10.1",
   "main": "main.js",
   "incursion": {
     "cfService": "https://incursion-cf.www-aipt.workers.dev",
@@ -9,10 +9,10 @@
   },
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder",
-    "build:linux": "electron-builder -l",
-    "build:win-linux": "electron-builder -w -l",
-    "build:win-linux-mac": "electron-builder -w -l -m"
+    "build": "electron-builder --config electron-builder.config.js",
+    "build:linux": "electron-builder --config electron-builder.config.js -l",
+    "build:win-linux": "electron-builder --config electron-builder.config.js -w -l",
+    "build:win-linux-mac": "electron-builder --config electron-builder.config.js -w -l -m"
   },
   "build": {
     "appId": "com.incursion.modmanager",
