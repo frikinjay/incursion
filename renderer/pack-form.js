@@ -4,8 +4,7 @@
     function open({ mode, snapshot }) {
         const edit = mode === 'edit';
         const meta = edit ? snapshot.meta : {};
-        // Every file in a pack is built for one loader, so the loader is fixed once there's content. The Minecraft version
-        // can still change: the mods move to their files for the new version (packs.retarget).
+        // With content, a new Minecraft version or loader moves every mod to its file for the new target (packs.retarget).
         const hasContent = edit && meta.mods.length > 0;
         let iconData = meta.icon || null;
         let folder = '';
@@ -16,7 +15,7 @@
         const desc = h('textarea.field', { placeholder: 'What is this pack about?' });
         desc.value = meta.description || '';
         const gameSel = h('select.field', { disabled: true }, h('option', 'Loading…'));
-        const loaderSel = h('select.field', { disabled: hasContent }, Object.entries(LOADERS).map(([v, l]) => h('option', { value: v }, l)));
+        const loaderSel = h('select.field', Object.entries(LOADERS).map(([v, l]) => h('option', { value: v }, l)));
         loaderSel.value = meta.loader || 'fabric';
         const loaderVerSel = h('select.field', { disabled: true }, h('option', 'Loading…'));
         const folderField = h('input.field', { readonly: true, placeholder: 'Choose where the pack is stored' });
@@ -62,11 +61,15 @@
             }
         }
         const moveNote = h('p.hint.full.hidden', { style: { marginTop: '-6px' } });
-        gameSel.addEventListener('change', () => {
-            const moving = hasContent && gameSel.value !== meta.gameVersion;
-            moveNote.textContent = moving ? `Every mod moves to its file for Minecraft ${gameSel.value}. You’ll see which ones have none before anything changes.` : '';
+        const noteMove = () => {
+            const game = gameSel.value !== meta.gameVersion, loader = loaderSel.value !== meta.loader;
+            const moving = hasContent && (game || loader);
+            const to = [loader ? LOADERS[loaderSel.value] : null, game ? `Minecraft ${gameSel.value}` : null].filter(Boolean).join(' and ');
+            moveNote.textContent = moving ? `Every mod moves to its file for ${to}. You’ll see which ones have none before anything changes.` : '';
             moveNote.classList.toggle('hidden', !moving);
-        });
+        };
+        gameSel.addEventListener('change', noteMove);
+        loaderSel.addEventListener('change', noteMove);
         gameSel.addEventListener('change', loadLoaderVersions);
         loaderSel.addEventListener('change', loadLoaderVersions);
 
@@ -82,7 +85,7 @@
             if (!edit && !folder) return showErr('Choose a folder for the pack.');
             save.disabled = true;
             try {
-                if (edit && hasContent && fields.gameVersion !== meta.gameVersion) return await move(fields);
+                if (edit && hasContent && (fields.gameVersion !== meta.gameVersion || fields.loader !== meta.loader)) return await move(fields);
                 if (edit) {
                     await call('packs:info', { path: meta.path, fields });
                     UI.Island.toast('Changes Saved', fields.name);
@@ -100,24 +103,24 @@
 
         const listOf = (names, max = 6) => (names.length > max ? `${names.slice(0, max).join(', ')} and ${names.length - max} more` : names.join(', '));
 
-        // Shows what a version change would do, then saves the other fields and moves the pack in the background.
+        // Shows what a version or loader change would do, then saves the other fields and moves the pack in the background.
         async function move(fields) {
             const label = save.textContent;
             save.textContent = 'Checking Mods…';
             try {
-                const plan = await call('packs:retarget', { path: meta.path, gameVersion: fields.gameVersion, loaderVersion: fields.loaderVersion, dryRun: true });
-                const v = plan.gameVersion;
-                const parts = [`${fmt.plural(plan.moving, 'mod')} will switch to ${plan.moving === 1 ? 'its' : 'their'} Minecraft ${v} files${plan.unchanged ? ` (${plan.unchanged} already work)` : ''}, with ${LOADERS[meta.loader]} ${plan.loaderVersion}.`];
-                if (plan.missing.length) parts.push(`${fmt.plural(plan.missing.length, 'mod')} ${plan.missing.length === 1 ? 'has' : 'have'} no ${v} file and will be turned off: ${listOf(plan.missing.map(m => m.title))}.`);
+                const plan = await call('packs:retarget', { path: meta.path, gameVersion: fields.gameVersion, loader: fields.loader, loaderVersion: fields.loaderVersion, dryRun: true });
+                const to = plan.target;
+                const parts = [`${fmt.plural(plan.moving, 'mod')} will switch to ${plan.moving === 1 ? 'its' : 'their'} files for ${to}${plan.unchanged ? ` (${plan.unchanged} already work)` : ''}, with ${LOADERS[plan.loader]} ${plan.loaderVersion}.`];
+                if (plan.missing.length) parts.push(`${fmt.plural(plan.missing.length, 'mod')} ${plan.missing.length === 1 ? 'has' : 'have'} no file for ${to} and will be turned off and marked incompatible: ${listOf(plan.missing.map(m => m.title))}.`);
                 if (plan.handAdded.length) parts.push(`Files added by hand stay as they are, so check them yourself: ${listOf(plan.handAdded)}.`);
                 parts.push('Nothing changes if a download fails.');
-                const ok = await UI.confirm({ title: `Move ${meta.name} to Minecraft ${v}?`, message: parts.join(' '), confirmLabel: 'Move Pack' });
+                const ok = await UI.confirm({ title: `Move ${meta.name} to ${to}?`, message: parts.join(' '), confirmLabel: 'Move Pack' });
                 if (!ok) { save.textContent = label; save.disabled = false; return; }
                 const { gameVersion, loader, loaderVersion, ...rest } = fields;
                 await call('packs:info', { path: meta.path, fields: rest });
                 d.close();
-                call('packs:retarget', { path: meta.path, gameVersion, loaderVersion })
-                    .then(r => UI.Island.toast(`Moved to Minecraft ${r.gameVersion}`, r.missing.length ? `${fmt.plural(r.missing.length, 'mod')} turned off` : `${fmt.plural(r.moving, 'mod')} moved`))
+                call('packs:retarget', { path: meta.path, gameVersion, loader, loaderVersion })
+                    .then(r => UI.Island.toast(`Moved to ${r.target}`, r.missing.length ? `${fmt.plural(r.missing.length, 'mod')} turned off` : `${fmt.plural(r.moving, 'mod')} moved`))
                     .catch(UI.Island.error);
             } catch (e) { save.textContent = label; save.disabled = false; showErr(e.message); }
         }
@@ -142,7 +145,6 @@
                         h('div', h('label.label', 'Minecraft'), gameSel),
                         h('div', h('label.label', 'Loader'), loaderSel),
                         h('div.full', h('label.label', 'Loader Version'), loaderVerSel),
-                        hasContent ? h('p.hint.full', { style: { marginTop: '-6px' } }, 'The loader can’t change once the pack has content.') : null,
                         moveNote,
                         !edit ? h('div.full', h('label.label', 'Folder'), h('div.path-pick', folderField,
                             h('button.btn', { on: { click: async () => {
@@ -158,5 +160,48 @@
         loadGameVersions();
     }
 
-    window.PackForm = { open };
+    // p: { path, name }. The copy goes into a new folder named after it, next to the original unless another place is
+    // chosen.
+    function duplicate(p) {
+        const parentOf = (x) => x.replace(/[\\/][^\\/]+[\\/]?$/, '');
+        let parent = parentOf(p.path);
+        const name = h('input.field', { value: `${p.name} Copy`, spellcheck: false });
+        const where = h('input.field', { readonly: true, value: parent });
+        const err = h('p.err-text.hidden');
+        const go = h('button.btn.primary', 'Duplicate');
+        const showErr = (m) => { err.textContent = m; err.classList.remove('hidden'); };
+        go.addEventListener('click', async () => {
+            const title = name.value.trim();
+            if (!title) { name.focus(); return showErr('Give the copy a name.'); }
+            go.disabled = true;
+            d.close();
+            try {
+                const dest = await call('packs:duplicate', { path: p.path, name: title, parent });
+                await App.refreshLibrary();
+                App.freshPacks.add(dest);
+                UI.Island.toast('Pack Duplicated', title);
+            } catch (e) { UI.Island.error(e); }
+        });
+        name.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); });
+        const d = UI.dialog({
+            content: [
+                h('div.dialog-body',
+                    h('h2', 'Duplicate Pack'),
+                    h('p', 'Copies the pack with all its files, configs and settings. Worlds and saves in its game folder aren’t copied.'),
+                    h('div.form-grid',
+                        h('div.full', h('label.label', 'Name'), name),
+                        h('div.full', h('label.label', 'Location'), h('div.path-pick', where,
+                            h('button.btn', { on: { click: async () => {
+                                const dir = await call('dialog:folder', { title: 'Choose Where the Copy Goes' });
+                                if (dir) { parent = dir; where.value = dir; }
+                            } } }, icon('folder'), 'Choose…')),
+                            h('p.hint', 'Incursion makes a new folder for the copy here. Publishing projects aren’t copied, so a release can’t land on the original’s pages.'))),
+                    err),
+                h('div.dialog-foot', h('button.btn', { on: { click: () => d.close() } }, 'Cancel'), go)
+            ]
+        });
+        setTimeout(() => { name.focus(); name.select(); }, 80);
+    }
+
+    window.PackForm = { open, duplicate };
 })();

@@ -273,6 +273,7 @@
                     } },
                     'sep',
                     { label: 'Show in Folder', icon: 'folder', onClick: () => call('shell:reveal', { path: path() }) },
+                    { label: 'Duplicate Pack…', icon: 'copy', onClick: () => PackForm.duplicate({ path: path(), name: snap.meta.name }) },
                     { label: 'Remove from Library', icon: 'trash', danger: true, onClick: async () => {
                         if (!(await UI.confirm({ title: `Remove “${snap.meta.name}”?`, message: 'The pack’s files stay on your computer. You can add it again at any time.', confirmLabel: 'Remove', danger: true }))) return;
                         await call('packs:forget', { path: path() });

@@ -37,6 +37,7 @@ const links = require('./util/links');
 links.init({ dir: () => datadir.get() });
 const community = require('./util/community');
 const votes = require('./util/votes');
+const updater = require('./util/updater');
 let linkPrefs = { shareLinks: true, manualLinksFirst: true, linksNoticeSeen: false };
 function applyLinkPrefs(p = {}) {
     linkPrefs = { shareLinks: p.shareLinks !== false, manualLinksFirst: p.manualLinksFirst !== false, linksNoticeSeen: !!p.linksNoticeSeen };
@@ -214,9 +215,10 @@ handle('app:theme', async ({ theme }) => {
     return { dark: nativeTheme.shouldUseDarkColors };
 });
 handle('settings:prefs', async (patch) => {
-    const allowed = ['accent', 'background', 'customBackgrounds', 'dim', 'blur', 'glass', 'motion', 'javaMode', 'jvmArgs', 'memoryMax', 'autoUpdate', 'autoUpdateHours', 'shareLinks', 'manualLinksFirst', 'linksNoticeSeen'];
+    const allowed = ['accent', 'background', 'customBackgrounds', 'dim', 'blur', 'glass', 'motion', 'javaMode', 'jvmArgs', 'memoryMax', 'autoUpdate', 'autoUpdateHours', 'shareLinks', 'manualLinksFirst', 'linksNoticeSeen', 'appUpdates'];
     const clean = Object.fromEntries(Object.entries(patch).filter(([k]) => allowed.includes(k)));
-    for (const k of ['shareLinks', 'manualLinksFirst', 'linksNoticeSeen']) if (k in clean) clean[k] = !!clean[k];
+    for (const k of ['shareLinks', 'manualLinksFirst', 'linksNoticeSeen', 'appUpdates']) if (k in clean) clean[k] = !!clean[k];
+    if ('appUpdates' in clean) updater.setAuto(clean.appUpdates);
     await storage.saveSettings({ prefs: clean });
     const next = await prefs();
     applyLinkPrefs(next);
@@ -400,6 +402,10 @@ handle('dialog:java', async () => {
     return j;
 });
 handle('shell:open', async ({ url }) => openExternal(url));
+handle('update:status', () => updater.status());
+handle('update:check', () => updater.check());
+handle('update:download', () => updater.download());
+handle('update:install', () => updater.installNow());
 handle('app:logs', async () => { await fs.ensureDir(logger.dir()); return shell.openPath(logger.dir()); });
 // Reveal files instead of opening them, since opening could run them.
 handle('shell:reveal', async ({ path: p }) => {
@@ -419,10 +425,11 @@ handle('packs:import', async () => {
 handle('packs:forget', ({ path: p }) => packs.forget(p));
 handle('packs:load', ({ path: p }) => packs.load(p));
 handle('packs:info', ({ path: p, fields }) => packs.updateInfo(p, fields));
-handle('packs:retarget', async ({ path: p, gameVersion, loaderVersion, dryRun }) => {
-    if (!dryRun && launcher.packBusy(p)) throw new Error('Close the game before changing the pack’s Minecraft version.');
-    return packs.retarget(p, { gameVersion, loaderVersion, dryRun: !!dryRun });
+handle('packs:retarget', async ({ path: p, gameVersion, loader, loaderVersion, dryRun }) => {
+    if (!dryRun && launcher.packBusy(p)) throw new Error('Close the game before changing the pack’s Minecraft version or loader.');
+    return packs.retarget(p, { gameVersion, loader, loaderVersion, dryRun: !!dryRun });
 });
+handle('packs:duplicate', ({ path: p, name, parent }) => packs.duplicate(p, { name, parent }));
 handle('packs:add', ({ path: p, items }) => packs.addMods(p, items));
 handle('packs:remove', ({ path: p, keys }) => packs.removeMods(p, keys));
 handle('packs:check', ({ path: p, keys }) => packs.checkUpdates(p, { keys }));
@@ -715,6 +722,12 @@ app.whenReady().then(async () => {
     launcher.init({ userData, emitter: send, windowGetter: () => win, secretBox, offline: !!process.env.INCURSION_DEV });
     createWindow();
     if (!process.env.INCURSION_HIDDEN) scheduler.start({ packs, launcher, getPrefs: prefs, emit: send });
+    const repo = /github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(require('./package.json').repository?.url || '')?.[1];
+    if (repo) updater.init({
+        userData, version: app.getVersion(), repo, packaged: app.isPackaged, emit: send,
+        busy: () => launcher.busy(), quit: () => app.quit(), relaunch: (o) => app.relaunch(o),
+        auto: !process.env.INCURSION_HIDDEN && (await prefs()).appUpdates !== false
+    }).catch((err) => log.warn('Updater didn’t start:', err.message));
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
@@ -722,7 +735,8 @@ let flushed = false;
 app.on('before-quit', (e) => {
     if (flushed) return;
     e.preventDefault();
-    Promise.all([packs.flushAll(), cache.flush(), links.flush()]).finally(() => { flushed = true; app.quit(); });
+    // The update installer only starts once everything is saved, since it closes whatever is still running.
+    Promise.all([packs.flushAll(), cache.flush(), links.flush()]).finally(async () => { await updater.onQuit(); flushed = true; app.quit(); });
 });
 app.on('render-process-gone', (_e, _wc, d) => log.error(`Renderer stopped: ${d.reason} (exit ${d.exitCode})`));
 app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') log.error(`${d.type} process stopped: ${d.reason} (exit ${d.exitCode})`); });

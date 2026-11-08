@@ -243,6 +243,22 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
     transition: opacity var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out);
 }
 .island.show { opacity: 1; transform: none; pointer-events: auto; }
+.update-pill {
+    display: none; margin-left: auto; height: 28px; align-items: center; gap: 2px; padding: 0 3px 0 2px; position: relative; overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--accent) 35%, var(--color-rule)); border-radius: var(--r-control);
+    background: var(--color-surface); -webkit-app-region: no-drag; white-space: nowrap; animation: drop-in var(--dur-short) var(--ease-out);
+}
+.update-pill.show { display: flex; }
+.update-pill.show + .island { margin-left: var(--space-xs); }
+.update-pill.error { border-color: color-mix(in oklab, var(--color-bad) 40%, var(--color-rule)); }
+.update-pill .up-text { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 6px; border: 0; border-radius: calc(var(--r-control) - 2px); background: transparent; color: var(--color-ink); font-size: 12px; font-weight: 600; }
+.update-pill button.up-text:hover { background: var(--color-sunken); }
+.update-pill .up-text .i { width: 13px; height: 13px; color: var(--accent); }
+.update-pill.error .up-text .i { color: var(--color-bad); }
+.update-pill .btn.sm { height: 22px; padding: 0 9px; }
+.update-pill .up-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--color-rule); }
+.update-pill .up-bar i { display: block; height: 100%; background: var(--accent); transition: width var(--dur-short) linear; }
+.update-notes { max-height: 46vh; overflow: auto; margin-top: var(--space-sm); padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-rule); border-radius: var(--r-control); background: var(--color-sunken); font-size: 13px; }
 .island-inner { display: flex; align-items: center; gap: var(--space-xs); height: 100%; padding: 0 10px 0 8px; white-space: nowrap; width: max-content; max-width: 420px; }
 .island-ring { position: relative; width: 14px; height: 14px; flex: none; display: grid; place-items: center; }
 .island-ring svg:first-child { position: absolute; inset: 0; width: 14px; height: 14px; transform: rotate(-90deg); }

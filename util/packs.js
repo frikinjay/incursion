@@ -14,6 +14,7 @@ const configs = require('./configs');
 const manual = require('./manual');
 const compat = require('./compat');
 const content = require('./content');
+const { LOADERS } = require('./loaders');
 
 const { modKey } = api;
 const channelOf = (meta) => (meta.releaseChannel === 'release' ? 'release' : 'beta');
@@ -117,6 +118,37 @@ async function scanEntry(packPath, m) {
     return out;
 }
 
+const isInside = (child, parent) => {
+    const rel = path.relative(path.resolve(parent), path.resolve(child));
+    return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+};
+
+async function freeFolder(parent, title) {
+    const base = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim() || 'Pack Copy';
+    for (let i = 1; ; i++) {
+        const dir = path.join(path.resolve(parent), i === 1 ? base : `${base} ${i}`);
+        if (!(await fs.pathExists(dir))) return dir;
+    }
+}
+
+// Windows briefly locks fresh folders while antivirus or the indexer looks at them.
+async function renameRetry(from, to) {
+    for (let i = 0; ; i++) {
+        try { return await fs.rename(from, to); }
+        catch (err) { if (i >= 8 || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err; await new Promise(r => setTimeout(r, 250 * (i + 1))); }
+    }
+}
+
+async function listFiles(dir) {
+    const out = [];
+    for (const e of await fs.readdir(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { if (!/^\.(retarget|incursion-staging)$/.test(e.name)) out.push(...await listFiles(p)); }
+        else if (e.isFile()) out.push({ path: p, size: (await fs.stat(p)).size });
+    }
+    return out;
+}
+
 // Packs stay in memory while in use. Past OPEN_KEPT, one untouched for IDLE_RELEASE with nothing running on it is saved
 // and let go; its next use loads it from disk again.
 const OPEN_KEPT = 3;
@@ -185,6 +217,56 @@ class PackService {
         await storage.savePack(info.path, meta);
         await this._syncLibraryEntry(meta);
         return meta.path;
+    }
+
+    // Copies the whole pack folder into a temporary sibling first and renames it into place once the copy is done, so
+    // a failed or interrupted copy never shows up as a pack. The copy gets its own id and game folder, and loses the
+    // publishing project ids so a release can't land on the original's projects by mistake.
+    async duplicate(packPath, { name, parent } = {}) {
+        const s = await this._get(packPath);
+        const title = String(name || '').trim().slice(0, 80) || `${s.meta.name} Copy`;
+        const target = await freeFolder(parent || path.dirname(path.resolve(packPath)), title);
+        if (path.resolve(target).toLowerCase() === path.resolve(packPath).toLowerCase()) throw new Error('Choose a different folder for the copy.');
+        if (isInside(target, packPath)) throw new Error('The copy can’t go inside the pack it copies.');
+        if (await fs.pathExists(target) && (await fs.readdir(target)).length) throw new Error('That folder isn’t empty. Choose an empty or new folder.');
+        const lib = await storage.getLibrary();
+        if (lib.some(e => path.resolve(e.path).toLowerCase() === target.toLowerCase())) throw new Error('A pack in your library already uses that folder.');
+
+        return this._exclusive(packPath, 'duplicate', async () => {
+            await this._flush(packPath);
+            const t = task(`Duplicating ${s.meta.name}`);
+            const temp = `${target}.incursion-copy`;
+            await fs.remove(temp);
+            try {
+                const files = await listFiles(packPath);
+                const total = files.reduce((n, f) => n + f.size, 0) || 1;
+                let copied = 0;
+                for (const f of files) {
+                    const to = path.join(temp, path.relative(packPath, f.path));
+                    await fs.ensureDir(path.dirname(to));
+                    await fs.promises.copyFile(f.path, to, fs.constants.COPYFILE_FICLONE);
+                    copied += f.size;
+                    t.update(copied / total, `${(copied / 1048576).toFixed(0)} of ${(total / 1048576).toFixed(0)} MB`);
+                }
+                const meta = await storage.loadPack(temp);
+                meta.id = crypto.randomUUID();
+                meta.name = title;
+                meta.path = target;
+                meta.createdAt = Date.now();
+                if (meta.publish) { delete meta.publish.curseforgeProjectId; delete meta.publish.modrinthProjectId; }
+                await storage.savePack(temp, meta);
+                await fs.remove(path.join(temp, `${storage.META_FILE}.bak`)).catch(() => {});
+                if (await fs.pathExists(target)) await fs.rmdir(target);
+                await renameRetry(temp, target);
+                await this._syncLibraryEntry(meta);
+                t.done(title);
+                return target;
+            } catch (err) {
+                await fs.remove(temp).catch(() => {});
+                t.fail(err.message);
+                throw new Error(`The pack wasn’t copied: ${err.message}`);
+            }
+        });
     }
 
     async import(dir) {
@@ -743,41 +825,45 @@ class PackService {
         mod.contents = await scanEntry(packPath, mod);
     }
 
-    // Moves the pack to another Minecraft version: every mod gets its file for that version on each platform. Hand-added
-    // files are left alone, and mods without a file for the new version are turned off. dryRun only reports what
-    // would happen. All new files are downloaded to a staging folder first, so a failed download changes nothing.
-    async retarget(packPath, { gameVersion, loaderVersion, dryRun = false }) {
+    // Moves the pack to another Minecraft version and/or loader: every mod gets its file for the new target on each
+    // platform. Hand-added files are left alone. A mod missing a file for the new target on any platform is turned off,
+    // keeping whatever did move, and its old file shows as incompatible in the list. dryRun only reports what would
+    // happen. All new files are downloaded to a staging folder first, so a failed download changes nothing.
+    async retarget(packPath, { gameVersion, loader, loaderVersion, dryRun = false }) {
         return this._exclusive(packPath, 'retarget', async () => {
             const s = await this._get(packPath);
             const { meta } = s;
-            if (!gameVersion) throw new Error('Choose a Minecraft version.');
-            const sameGame = gameVersion === meta.gameVersion;
-            const loaders = await api.getLoaderVersions({ loader: meta.loader, gameVersion });
-            if (!loaders.length) throw new Error(`${meta.loader} has no builds for Minecraft ${gameVersion}.`);
+            gameVersion ||= meta.gameVersion;
+            loader = LOADERS[loader] ? loader : meta.loader;
+            const sameGame = gameVersion === meta.gameVersion && loader === meta.loader;
+            const target = loader === meta.loader ? `Minecraft ${gameVersion}`
+                : gameVersion === meta.gameVersion ? LOADERS[loader].label : `${LOADERS[loader].label} for Minecraft ${gameVersion}`;
+            const loaders = await api.getLoaderVersions({ loader, gameVersion });
+            if (!loaders.length) throw new Error(`${LOADERS[loader].label} has no builds for Minecraft ${gameVersion}.`);
             const loaderPick = loaders.some(v => v.version === loaderVersion) ? loaderVersion : (loaders.find(v => v.stable) || loaders[0]).version;
             const title = (m) => m.names.curseforge || m.names.modrinth || m.installedFiles?.modrinth || m.installedFiles?.curseforge || modKey(m);
 
             const tracked = meta.mods.filter(m => !manual.isLocal(m));
             const handAdded = meta.mods.filter(m => manual.isLocal(m) || manual.PLATFORMS.some(pl => manual.isManual(m, pl))).map(title);
-            const t = task(dryRun ? `Checking Mods for ${gameVersion}` : `Moving to Minecraft ${gameVersion}`);
+            const t = task(dryRun ? `Checking Mods for ${target}` : `Moving to ${target}`);
             try {
                 const res = sameGame ? { updates: {}, missing: {}, errors: [] } : await api.checkUpdates({
-                    mods: tracked, gameVersion, loader: meta.loader, hashOf: this._hashOf(packPath), retarget: true, channel: channelOf(meta),
+                    mods: tracked, gameVersion, loader, hashOf: this._hashOf(packPath), retarget: true, channel: channelOf(meta),
                     skip: (m, pl) => manual.isManual(m, pl)
                 }, (pct) => t.update(dryRun ? pct / 100 : pct / 400));
                 if (res.errors.length) throw new Error(`Couldn’t check every mod: ${res.errors.join(' · ')}`);
                 const byKey = new Map(meta.mods.map(m => [modKey(m), m]));
                 const missing = Object.keys(res.missing).filter(k => byKey.has(k));
-                const moving = Object.keys(res.updates).filter(k => byKey.has(k) && !res.missing[k]);
+                const moving = Object.keys(res.updates).filter(k => byKey.has(k));
                 const summary = {
-                    gameVersion, loaderVersion: loaderPick,
+                    gameVersion, loader, loaderVersion: loaderPick, target,
                     moving: moving.length,
-                    unchanged: tracked.length - moving.length - missing.length,
+                    unchanged: tracked.filter(m => !res.updates[modKey(m)] && !res.missing[modKey(m)]).length,
                     missing: missing.map(k => ({ key: k, title: title(byKey.get(k)), platforms: res.missing[k] })),
                     handAdded
                 };
-                log.info(`${meta.name}: ${gameVersion} check: ${moving.length} to move, ${summary.unchanged} unchanged, ${missing.length} without a file`);
-                if (dryRun) { t.done(`${moving.length} to move, ${missing.length} without a ${gameVersion} file`); return summary; }
+                log.info(`${meta.name}: ${target} check: ${moving.length} to move, ${summary.unchanged} unchanged, ${missing.length} without a file`);
+                if (dryRun) { t.done(`${moving.length} to move, ${missing.length} without a file for ${target}`); return summary; }
 
                 // 1. Download everything into staging.
                 const staging = path.join(packPath, '.retarget');
@@ -809,15 +895,16 @@ class PackService {
                     await this._applyPatch(packPath, mod, res.updates[key], null, staged.get(key));
                 }
                 await fs.remove(staging).catch(() => {});
-                const from = meta.gameVersion;
+                const from = `${LOADERS[meta.loader].label} ${meta.gameVersion}`;
                 meta.gameVersion = gameVersion;
+                meta.loader = loader;
                 meta.loaderVersion = loaderPick;
                 s.pending.updates = {};
                 s.pending.checkedAt = 0;
                 this._changed(s);
                 if (missing.length) await this.setDisabled(packPath, missing, true);
                 else await this._flush(packPath);
-                log.info(`${meta.name}: moved from ${from} to ${gameVersion} (${moving.length} moved, ${missing.length} turned off)`);
+                log.info(`${meta.name}: moved from ${from} to ${LOADERS[loader].label} ${gameVersion} (${moving.length} moved, ${missing.length} turned off)`);
                 t.done(missing.length ? `${moving.length} moved, ${missing.length} turned off` : `${moving.length} mods moved`);
                 return { ...summary, snapshot: this.snapshot(s) };
             } catch (err) { t.fail(err.message); throw err; }

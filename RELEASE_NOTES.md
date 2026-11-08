@@ -1,3 +1,22 @@
+# Incursion 2.10.0: App Updates, Duplicate Packs and Loader Changes
+
+## Highlights
+- **Incursion updates itself.** It checks GitHub for a new release when it starts and every hour after that. When one is out, a notice shows in the top bar. Press Update and it downloads, checks the file against the release's SHA-256 checksums, and asks whether to restart now or later. If you pick later, the update installs the next time you quit.
+- **Duplicate a pack** from the library card's menu or the pack's More menu. The copy gets every file, config and setting, sits in its own folder next to the original (or wherever you choose), and has its own game folder.
+- **Change a pack's loader**, not just its Minecraft version. Every mod moves to its file for the new loader on each platform. A mod with no file for the new loader is turned off and marked incompatible in the list, so you can see what to replace.
+
+## Details
+- Updates are installed only after the downloaded file matches the release's checksum. A download that fails or doesn't match is thrown away, and the running app is never touched until then.
+- A verified update survives a crash or a restart, and Incursion cleans up the installer once the new version runs.
+- Nothing installs while a game is running, since updating closes Incursion and the game with it.
+- Windows installs silently. On macOS the new app replaces the old one in place. Linux AppImages are swapped in place, and .deb installs ask for your password. Where Incursion can't install by itself, the notice links to the release page.
+- Settings → Updates shows the current version with a Check Now button, and lets you turn off automatic checks.
+- Moving a pack to another version or loader now keeps the files that did move for a mod, even when its other platform has none.
+- Mods added by hand that are built for the other loader family (Fabric or Quilt in a Forge or NeoForge pack, or the other way round) are flagged as incompatible.
+- A duplicate is copied to a temporary folder first and only appears once the copy is complete, so a failed copy leaves nothing behind. Publishing projects aren't copied, so a release from the copy can't land on the original's pages.
+
+---
+
 # Incursion 2.9.4: CurseForge Licenses
 
 ## Fixes

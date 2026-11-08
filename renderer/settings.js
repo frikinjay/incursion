@@ -217,7 +217,33 @@
             everySel.disabled = modeSel.value === 'off';
             modeSel.addEventListener('change', () => { everySel.disabled = modeSel.value === 'off'; setPrefs({ autoUpdate: modeSel.value }); });
             everySel.addEventListener('change', () => setPrefs({ autoUpdateHours: Number(everySel.value) }));
+            const appStatus = h('div.d');
+            const appBtn = h('button.btn.sm', 'Check Now');
+            const showApp = (u) => {
+                const v = u?.latest?.version;
+                appStatus.textContent = !u ? '' : u.status === 'checking' ? 'Checking…'
+                    : u.status === 'available' ? `Incursion ${v} is available.${u.method === 'manual' && u.manualReason ? ` ${u.manualReason}` : ''}`
+                    : u.status === 'downloading' ? `Downloading ${v}…`
+                    : u.status === 'ready' ? `Incursion ${v} is downloaded and installs when you restart.`
+                    : u.status === 'error' ? u.error
+                    : u.checkedAt ? `Up to date, checked ${fmt.ago(u.checkedAt)}.` : 'Checks when Incursion starts and every hour.';
+                appBtn.textContent = u?.status === 'available' || u?.status === 'ready' ? 'What’s New' : 'Check Now';
+            };
+            showApp(Updates.state());
+            const offApp = Updates.on((u) => { if (!appStatus.isConnected) offApp(); else showApp(u); });
+            appBtn.addEventListener('click', async () => {
+                const u = Updates.state();
+                if (u.status === 'available' || u.status === 'ready') return Updates.whatsNew();
+                appBtn.disabled = true;
+                try { showApp(await Updates.check()); } catch (err) { UI.Island.error(err); } finally { appBtn.disabled = false; }
+            });
+            const appToggle = UI.toggle(prefs.appUpdates !== false, (v) => setPrefs({ appUpdates: v }).catch(UI.Island.error), 'Check for Incursion updates automatically');
             body.append(section('updates', 'Updates',
+                h('div.group-title', 'Incursion'),
+                h('div.group',
+                    h('div.cell', h('span.grow', h('div.t', `Version ${info.version || ''}`), appStatus), appBtn),
+                    h('div.cell', h('span.grow', h('div.t', 'Check Automatically'), h('div.d', 'When Incursion starts and every hour. Updates download and install only when you press Update.')), appToggle)),
+                h('div.group-title', 'Packs'),
                 h('div.group',
                     h('div.cell', h('span.grow', h('div.t', 'Automatic Update Checks'), h('div.d', 'Runs in the background for every pack in your library. Pinned mods are skipped; a pack whose game is running is never changed.')), h('div', { style: { width: '220px' } }, modeSel)),
                     h('div.cell', h('span.k', 'Frequency'), h('div', { style: { width: '220px', marginLeft: 'auto' } }, everySel))),

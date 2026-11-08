@@ -154,6 +154,7 @@
     window.incursion.on(({ type, payload }) => {
         if (type === 'task') UI.Island.task(payload);
         else if (type === 'downloads') UI.Downloads.update(payload.items);
+        else if (type === 'update') Updates.update(payload);
         else if (type === 'pack') {
             if (snapshots.has(payload.meta.path)) remember(payload.meta.path, payload);
             const { route } = state.get();
@@ -195,6 +196,7 @@
         document.body.classList.add(`os-${info.platform}`);
         await App.refreshLibrary();
         App.go({ name: 'library' });
+        Updates.mount();
         // Tell main we're drawn so it can swap out the splash.
         requestAnimationFrame(() => requestAnimationFrame(() => call('app:ready').catch(() => {})));
         setTimeout(() => document.documentElement.classList.remove('booting'), 600);

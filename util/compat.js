@@ -7,6 +7,7 @@ const { LOADERS } = require('./loaders');
 const content = require('./content');
 
 const PLATFORMS = ['modrinth', 'curseforge'];
+const FAMILY = { fabric: 'fabric', quilt: 'fabric', forge: 'forge', neoforge: 'forge' };
 const LOADER_DEP = { neoforge: 'neoforge', forge: 'forge', fabric: 'fabricloader', quilt: 'quilt_loader' };
 const keyOf = (m) => String(m.ids.curseforge || m.ids.modrinth || m.ids.local);
 const titleOf = (m) => m.names?.curseforge || m.names?.modrinth || m.installedFiles?.modrinth || m.installedFiles?.curseforge || 'Unknown mod';
@@ -28,6 +29,12 @@ function reasons(meta, m, pl) {
     const known = t?.loaders?.filter(l => LOADERS[l]) || [];
     if (usesLoader && known.length && !loaderFits(known, meta.loader)) {
         out.push({ kind: 'loader', text: `Made for ${known.map(label).join(', ')}` });
+    }
+    // Files the sites don't describe (added by hand) fall back to what the jar is built for. Forge and NeoForge read
+    // each other's metadata closely enough that only a Fabric/Quilt vs Forge/NeoForge split counts.
+    const built = m.contents?.file === m.installedFiles[pl] ? (m.contents?.loaders || []).filter(l => LOADERS[l]) : [];
+    if (usesLoader && !known.length && built.length && !built.some(l => FAMILY[l] === FAMILY[meta.loader])) {
+        out.push({ kind: 'loader', text: `Built for ${[...new Set(built)].map(label).join(', ')}` });
     }
     const req = m.contents?.requires?.[pl];
     if (req && usesLoader) {

@@ -40,6 +40,7 @@
         UI.menu(anchor, [
             { label: 'Open', icon: 'chev', onClick: () => App.go({ name: 'pack', path: p.path }), disabled: !p.available },
             { label: 'Show in Folder', icon: 'folder', onClick: () => call('shell:reveal', { path: p.path }), disabled: !p.available },
+            { label: 'Duplicate…', icon: 'copy', onClick: () => PackForm.duplicate(p), disabled: !p.available },
             'sep',
             { label: 'Remove from Library', icon: 'trash', danger: true, onClick: () => forget(p) }
         ], { align: 'right' });
