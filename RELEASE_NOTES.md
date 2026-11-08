@@ -1,3 +1,10 @@
+# Incursion 3.0.2: Account Fixes
+
+## Fixes
+- Adding, switching or removing a Minecraft account from the sidebar now shows up straight away on an open Settings page, and changes made in Settings update the sidebar.
+
+---
+
 # Incursion 3.0.1: Add Content While Scrolled
 
 ## Improvements

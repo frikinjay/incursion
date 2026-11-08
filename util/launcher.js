@@ -19,7 +19,7 @@ let emit = () => {};
 let getWindow = () => null;
 let secrets = null;
 let accountsFile = null;
-let allowOffline = false;
+let offlineEnabled = async () => false;
 
 const loadEml = async () => (eml ||= (await import('eml-lib')).default);
 
@@ -59,6 +59,7 @@ async function writeAccounts({ active, list }) {
         list: await Promise.all(list.map(async a => ({ uuid: a.uuid, enc: secrets.available ? await secrets.encrypt(JSON.stringify(a)) : JSON.stringify(a) })))
     });
 }
+const OFFLINE_NAME = /^[A-Za-z0-9_]{3,16}$/;
 const publicAccount = (a) => a && ({ uuid: a.uuid, name: a.name, type: a.meta?.type || 'msa', avatar: `https://mc-heads.net/avatar/${a.uuid}/64` });
 
 class Instance {
@@ -279,17 +280,17 @@ async function selectShader(gameDir, name) {
 }
 
 const launcher = {
-    init({ userData, emitter, windowGetter, secretBox, offline = false }) {
+    init({ userData, emitter, windowGetter, secretBox, offlineAllowed }) {
         accountsFile = path.join(userData, 'accounts.json');
         emit = emitter;
         getWindow = windowGetter;
         secrets = secretBox;
-        allowOffline = offline;
+        offlineEnabled = offlineAllowed || (async () => false);
     },
 
     async accounts() {
         const { active, list } = await readAccounts();
-        return { active, list: list.map(publicAccount), offlineAllowed: allowOffline };
+        return { active, list: list.map(publicAccount), offlineAllowed: await offlineEnabled().catch(() => false) };
     },
 
     async login() {
@@ -302,11 +303,13 @@ const launcher = {
         return launcher.accounts();
     },
 
-    // Offline accounts only exist in developer mode (INCURSION_DEV). They can't join online servers.
+    // Offline accounts need Developer Mode. They play singleplayer, LAN and offline-mode servers, never online-mode ones.
     async loginOffline(name) {
-        if (!allowOffline) throw new Error('Offline accounts are disabled.');
+        if (!(await offlineEnabled().catch(() => false))) throw new Error('Turn on Developer Mode in Settings to add offline accounts.');
+        name = String(name ?? '').trim();
+        if (!OFFLINE_NAME.test(name)) throw new Error('Use 3 to 16 letters, numbers or underscores for the name.');
         const { CrackAuth } = await loadEml();
-        const account = new CrackAuth().auth(String(name || 'Tester').replace(/[^A-Za-z0-9_]/g, '').slice(0, 16) || 'Tester');
+        const account = new CrackAuth().auth(name);
         const data = await readAccounts();
         data.list = [...data.list.filter(a => a.uuid !== account.uuid), account];
         data.active = account.uuid;
@@ -335,6 +338,7 @@ const launcher = {
         const data = await readAccounts();
         let account = data.list.find(a => a.uuid === data.active);
         if (!account) throw Object.assign(new Error('Sign in with a Microsoft account to play.'), { code: 'NO_ACCOUNT' });
+        if (account.meta?.type === 'crack' && !(await offlineEnabled().catch(() => false))) throw Object.assign(new Error(`${account.name} is an offline account. Turn on Developer Mode in Settings to play with it, or switch to a Microsoft account.`), { code: 'OFFLINE_OFF' });
         if (account.meta?.type === 'msa') {
             const { MicrosoftAuth } = await loadEml();
             const auth = new MicrosoftAuth(getWindow());

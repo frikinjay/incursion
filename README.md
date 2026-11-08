@@ -14,7 +14,7 @@ Get the latest version from [Releases](https://github.com/frikinjay/incursion/re
 
 | System | File |
 | --- | --- |
-| Windows | `Incursion Setup <version>.exe` |
+| Windows | `Incursion-Setup-<version>.exe` |
 | macOS (Intel and Apple Silicon) | `Incursion-<version>-universal.dmg` |
 | Linux (Ubuntu, Debian) | `incursion_<version>_amd64.deb`, recommended on Ubuntu 24.04 and newer |
 | Linux (other) | `Incursion-<version>.AppImage` |

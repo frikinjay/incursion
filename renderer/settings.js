@@ -3,7 +3,7 @@
 
     const ACCENTS = [['Cobalt', '', '#0076ed'], ['Indigo', '#615ed6'], ['Violet', '#9751d7'], ['Magenta', '#d0399c'], ['Red', '#de3b3d'], ['Orange', '#e8721c'], ['Amber', '#e2a520'], ['Green', '#20a04e'], ['Teal', '#009b95'], ['Cyan', '#01a2c5'], ['Graphite', '#4e5661']];
     const PRESET_NAMES = { plain: 'Plain' };
-    const SECTIONS = [['appearance', 'Appearance', 'palette'], ['accounts', 'Accounts', 'user'], ['keys', 'API Keys', 'key'], ['java', 'Java', 'cpu'], ['launch', 'Launch Defaults', 'sliders'], ['updates', 'Updates', 'refresh'], ['community', 'Community Links', 'globe'], ['data', 'Data', 'database']];
+    const SECTIONS = [['appearance', 'Appearance', 'palette'], ['accounts', 'Accounts', 'user'], ['keys', 'API Keys', 'key'], ['java', 'Java', 'cpu'], ['launch', 'Launch Defaults', 'sliders'], ['updates', 'Updates', 'refresh'], ['community', 'Community Links', 'globe'], ['data', 'Data', 'database'], ['developer', 'Developer', 'wrench']];
     const link = (label, url) => h('a', { on: { click: () => call('shell:open', { url }) } }, label);
 
     const SettingsView = {
@@ -86,12 +86,15 @@
                     ...acc.list.map(a => h('div.cell',
                         img(a.avatar, 'avatar'),
                         h('span.grow', h('div.t', a.name), h('div.d', a.type === 'crack' ? 'Offline Account' : 'Microsoft Account')),
-                        a.uuid === acc.active ? h('span.chip.sm.accent', icon('check'), 'Playing As') : h('button.btn.sm', { on: { click: () => call('play:select', { uuid: a.uuid }).then(renderAccounts) } }, 'Use'),
-                        h('button.btn.ghost.sm', { on: { click: () => call('play:logout', { uuid: a.uuid }).then(renderAccounts) } }, 'Sign Out'))),
+                        a.uuid === acc.active ? h('span.chip.sm.accent', icon('check'), 'Playing As') : h('button.btn.sm', { on: { click: () => call('play:select', { uuid: a.uuid }).then(() => Play.refreshAccounts()) } }, 'Use'),
+                        h('button.btn.ghost.sm', { on: { click: () => call('play:logout', { uuid: a.uuid }).then(() => Play.refreshAccounts()) } }, a.type === 'crack' ? 'Remove' : 'Sign Out'))),
                     h('div.cell', h('span.grow', h('div.t', acc.list.length ? 'Add Another Account' : 'Sign In to Play'), h('div.d', 'Opens Microsoft’s sign-in. After the first time, pick your account in one click or use a passkey / Windows Hello.')),
-                        h('button.btn.primary.sm', { on: { click: async () => { if (await Play.signIn()) renderAccounts(); } } }, icon('user'), 'Sign In with Microsoft')));
+                        h('button.btn.primary.sm', { on: { click: async () => { if (await Play.signIn()) renderAccounts(); } } }, icon('user'), 'Sign In with Microsoft')),
+                    acc.offlineAllowed ? h('div.cell', h('span.grow', h('div.t', 'Add Offline Account'), h('div.d', 'For testing packs with no sign-in or internet. Plays singleplayer, LAN worlds and offline-mode servers; online servers won’t let it join.')),
+                        h('button.btn.sm', { on: { click: async () => { if (await Play.addOffline()) renderAccounts(); } } }, icon('key'), 'Add Offline Account')) : null);
             }
             renderAccounts();
+            const stopWatching = Play.onChange(() => { if (accGroup.isConnected) renderAccounts(); else stopWatching(); });
             body.append(section('accounts', 'Accounts',
                 accGroup,
                 h('p.hint', { style: { margin: '-4px 6px 14px' } }, 'Windows doesn’t share its Microsoft account with other apps, so Incursion remembers its own sign-in. Passkeys and Windows Hello work in the sign-in window.'),
@@ -325,6 +328,15 @@
                         h('button.btn.sm', { on: { click: () => call('app:logs').catch(UI.Island.error) } }, 'Open'))),
                 h('div.group', { style: { marginTop: '14px' } },
                     h('div.cell', img('icon.svg', 'avatar'), h('span.grow', h('div.t', `Incursion ${info.version || ''}`), h('div.d', 'Modpacks for CurseForge and Modrinth, built and played in one place.'))))));
+
+            const devToggle = UI.toggle(prefs.developerMode === true, async (v) => {
+                try { await setPrefs({ developerMode: v }); }
+                catch (err) { devToggle.set?.(!v); UI.Island.error(err); return; }
+                await Play.refreshAccounts().catch(() => {});
+            }, 'Developer Mode');
+            body.append(section('developer', 'Developer',
+                h('div.group',
+                    h('div.cell', h('span.grow', h('div.t', 'Developer Mode')), devToggle))));
 
             if (focus) setTimeout(() => body.querySelector(`#set-${focus}`)?.scrollIntoView(), 50);
             return { destroy() {} };

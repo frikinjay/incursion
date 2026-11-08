@@ -22,13 +22,30 @@
         } catch (err) { UI.Island.error(err); return false; }
     }
 
+    async function addOffline() {
+        if (!accounts.offlineAllowed) { UI.Island.error('Turn on Developer Mode in Settings to add offline accounts.'); return false; }
+        let name = '';
+        for (;;) {
+            name = await UI.prompt({ title: 'Add Offline Account', message: 'Plays singleplayer, LAN worlds and servers in offline mode, with no internet needed. Online servers won’t let it join. Use 3 to 16 letters, numbers or underscores.', value: name, placeholder: 'Steve', confirmLabel: 'Add' });
+            if (!name) return false;
+            if (/^[A-Za-z0-9_]{3,16}$/.test(name)) break;
+            UI.Island.error('Use 3 to 16 letters, numbers or underscores for the name.');
+        }
+        try {
+            accounts = await call('play:login-offline', { name });
+            renderAccount(); notify();
+            UI.Island.toast('Offline Account Added', name);
+            return true;
+        } catch (err) { UI.Island.error(err); return false; }
+    }
+
     function accountMenu(anchor) {
         const items = [{ heading: 'Minecraft Accounts' }];
         for (const a of accounts.list) items.push({ label: `${a.name}${a.type === 'crack' ? ' (Offline)' : ''}`, checked: a.uuid === accounts.active, onClick: () => call('play:select', { uuid: a.uuid }).then(r => { accounts = r; renderAccount(); notify(); }) });
         items.push('sep', { label: 'Add Microsoft Account', icon: 'plus', onClick: signIn });
-        if (accounts.offlineAllowed) items.push({ label: 'Add Offline Account', icon: 'key', onClick: () => call('play:login-offline', { name: 'Tester' }).then(r => { accounts = r; renderAccount(); notify(); }) });
+        if (accounts.offlineAllowed) items.push({ label: 'Add Offline Account…', icon: 'key', onClick: addOffline });
         const cur = activeAccount();
-        if (cur) items.push('sep', { label: `Sign Out ${cur.name}`, icon: 'x', danger: true, onClick: () => call('play:logout', { uuid: cur.uuid }).then(r => { accounts = r; renderAccount(); notify(); UI.Island.toast('Signed out', cur.name); }) });
+        if (cur) items.push('sep', { label: `${cur.type === 'crack' ? 'Remove' : 'Sign Out'} ${cur.name}`, icon: 'x', danger: true, onClick: () => call('play:logout', { uuid: cur.uuid }).then(r => { accounts = r; renderAccount(); notify(); UI.Island.toast(cur.type === 'crack' ? 'Account Removed' : 'Signed Out', cur.name); }) });
         UI.menu(anchor, items, { align: 'left' });
     }
 
@@ -37,7 +54,7 @@
         if (!slot) return;
         const a = activeAccount();
         if (!a) {
-            slot.replaceChildren(h('button.nav-item.account', { on: { click: (e) => accounts.list.length ? accountMenu(e.currentTarget) : signIn() } },
+            slot.replaceChildren(h('button.nav-item.account', { on: { click: (e) => accounts.list.length || accounts.offlineAllowed ? accountMenu(e.currentTarget) : signIn() } },
                 h('span.avatar.none', icon('key')), h('span', h('span.acc-name', 'Sign In to Play'), h('span.acc-sub', 'Microsoft Account'))));
             return;
         }
@@ -375,5 +392,5 @@
         renderRunning();
     })().catch(() => {});
 
-    window.Play = { button, launch, stop, signIn, openConsole: (id) => Console.open(id), activeAccount, onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
+    window.Play = { button, launch, stop, signIn, addOffline, refreshAccounts, openConsole: (id) => Console.open(id), activeAccount, onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
 })();

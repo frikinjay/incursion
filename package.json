@@ -1,6 +1,6 @@
 {
   "name": "incursion",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "main": "main.js",
   "incursion": {
     "cfService": "https://incursion-cf.www-aipt.workers.dev",
@@ -59,6 +59,7 @@
       "package.json"
     ],
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": true,

@@ -251,9 +251,9 @@ handle('app:theme', async ({ theme }) => {
     return { dark: nativeTheme.shouldUseDarkColors };
 });
 handle('settings:prefs', async (patch) => {
-    const allowed = ['accent', 'background', 'customBackgrounds', 'dim', 'blur', 'glass', 'motion', 'javaMode', 'jvmArgs', 'memoryMax', 'autoUpdate', 'autoUpdateHours', 'shareLinks', 'manualLinksFirst', 'linksNoticeSeen', 'appUpdates'];
+    const allowed = ['accent', 'background', 'customBackgrounds', 'dim', 'blur', 'glass', 'motion', 'javaMode', 'jvmArgs', 'memoryMax', 'autoUpdate', 'autoUpdateHours', 'shareLinks', 'manualLinksFirst', 'linksNoticeSeen', 'appUpdates', 'developerMode'];
     const clean = Object.fromEntries(Object.entries(patch).filter(([k]) => allowed.includes(k)));
-    for (const k of ['shareLinks', 'manualLinksFirst', 'linksNoticeSeen', 'appUpdates']) if (k in clean) clean[k] = !!clean[k];
+    for (const k of ['shareLinks', 'manualLinksFirst', 'linksNoticeSeen', 'appUpdates', 'developerMode']) if (k in clean) clean[k] = !!clean[k];
     if ('appUpdates' in clean) updater.setAuto(clean.appUpdates);
     await storage.saveSettings({ prefs: clean });
     const next = await prefs();
@@ -776,7 +776,7 @@ app.whenReady().then(async () => {
     }
     const s = await storage.getSettings();
     nativeTheme.themeSource = s.theme || 'system';
-    launcher.init({ userData, emitter: send, windowGetter: () => win, secretBox, offline: !!process.env.INCURSION_DEV });
+    launcher.init({ userData, emitter: send, windowGetter: () => win, secretBox, offlineAllowed: async () => !!process.env.INCURSION_DEV || (await prefs()).developerMode === true });
     createWindow();
     if (!process.env.INCURSION_HIDDEN) scheduler.start({ packs, launcher, getPrefs: prefs, emit: send });
     const repo = /github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(require('./package.json').repository?.url || '')?.[1];

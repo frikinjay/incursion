@@ -135,7 +135,7 @@
     }
     state.sub(renderSidebar);
 
-    const SECTION_NAMES = { appearance: 'Appearance', accounts: 'Accounts', keys: 'API Keys', java: 'Java', launch: 'Launch Defaults', data: 'Data' };
+    const SECTION_NAMES = { appearance: 'Appearance', accounts: 'Accounts', keys: 'API Keys', java: 'Java', launch: 'Launch Defaults', data: 'Data', developer: 'Developer' };
     let lastCrumbs = '';
     function renderCrumbs() {
         const { route, snapshot } = state.get();
