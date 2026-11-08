@@ -211,19 +211,20 @@
             renderAnalysis(sum);
         }
 
+        async function openModIn(packPath, key) {
+            const route = App.state.get().route;
+            if (route.name !== 'pack' || route.path !== packPath) await App.go({ name: 'pack', path: packPath });
+            const m = App.state.get().snapshot?.meta.mods.find(x => Lib.modKey(x) === key);
+            if (m) { cur?.d?.close(); Inspector.open(m); }
+        }
+
         function renderAnalysis(sum) {
             const a = sum.crash?.analysis;
             const sig = a ? JSON.stringify([a.headline, a.suspects.map(s => s.key)]) : '';
             if (cur.analysisSig === sig) return;
             cur.analysisSig = sig;
             if (!a) { cur.analysis.replaceChildren(); cur.analysis.classList.add('hidden'); return; }
-            const openMod = async (key) => {
-                const pack = App.state.get().route;
-                if (pack.name !== 'pack' || pack.path !== sum.packPath) await App.go({ name: 'pack', path: sum.packPath });
-                const snap = App.state.get().snapshot;
-                const m = snap?.meta.mods.find(x => Lib.modKey(x) === key);
-                if (m) { cur?.d?.close(); Inspector.open(m); }
-            };
+            const openMod = (key) => openModIn(sum.packPath, key);
             cur.analysis.classList.remove('hidden');
             cur.analysis.replaceChildren(
                 h('div.crash-head', icon('bug'), h('div', h('div.t', a.headline), a.cause ? h('div.d', a.cause) : a.exception && a.exception !== a.headline ? h('div.d.mono', a.exception) : null)),
@@ -234,6 +235,57 @@
                         h('span.crash-reason', { title: s.reasons.join('\n') },s.reasons.join(' · ')),
                         icon('chev'))))
                     : h('p.muted', 'No pack entry is named in the crash output. The log below has the details.'));
+        }
+
+        // The thread viewer (util/threads.js): problem threads and the game's main loops first, the quiet ones folded away.
+        const fmtGb = (n) => (n > 0 ? `${(n / 1073741824).toFixed(1)} GB` : '?');
+        function renderThreads(view) {
+            const c = cur;
+            if (!c) return;
+            const shown = view.threads.filter(t => t.level !== 'ok' || t.main || (t.cpuPct || 0) >= 10);
+            const rest = view.threads.filter(t => !shown.includes(t));
+            const row = (t) => {
+                const open = c.expanded.has(t.id);
+                const chip = h(`span.chip.sm${t.level === 'bad' ? '.red' : t.level === 'warn' ? '.amber' : ''}`, t.label);
+                const mod = t.culprit ? h(`button.thread-mod${t.culprit.key ? '' : '.plain'}`, {
+                    title: t.culprit.via === 'mixin' ? `${t.culprit.title}, through code it adds to Minecraft` : `Its code is in ${t.culprit.title}`,
+                    disabled: !t.culprit.key,
+                    on: { click: (e) => { e.stopPropagation(); if (t.culprit.key) openModIn(c.packPath, t.culprit.key); } }
+                }, icon('cube'), t.culprit.title) : null;
+                const stack = open ? h('div.thread-stack',
+                    t.stack.map(f => h(`div.frame${f.mod ? '.mod' : ''}`,
+                        h('span.frame-at', `${f.c}.${f.m}${f.l > 0 ? `:${f.l}` : ''}`),
+                        f.mod ? h('span.frame-mod', f.mod.title) : f.j ? h('span.frame-jar', f.j) : null)),
+                    t.depth > t.stack.length ? h('div.frame.more', `… ${t.depth - t.stack.length} more`) : null) : null;
+                const toggle = () => { if (c.expanded.has(t.id)) c.expanded.delete(t.id); else c.expanded.add(t.id); renderThreads(view); };
+                return h(`div.thread${open ? '.open' : ''}`,
+                    h('div.thread-head', { role: 'button', tabindex: '0', on: { click: toggle, keydown: (e) => { if (e.key === 'Enter') toggle(); } } },
+                        icon(open ? 'chev-down' : 'chev'),
+                        h('span.thread-name', { title: t.name }, t.name),
+                        t.main ? h('span.chip.sm', { title: 'One of the game’s main loops: when it stops, the game freezes' }, 'Game Loop') : null,
+                        chip, mod,
+                        h('span.thread-cpu', { title: 'Share of one CPU core since the last look' }, t.cpuPct == null ? '' : `${t.cpuPct}% CPU`)),
+                    stack);
+            };
+            c.threadsBody.replaceChildren(
+                h(`div.thread-summary.${view.summary.level}`, icon(view.summary.level === 'ok' ? 'check' : 'warn'), h('span.grow', view.summary.text),
+                    h('span.muted.mono', `Memory ${fmtGb(view.heap.used)} of ${fmtGb(view.heap.max)}`)),
+                h('div.thread-list', shown.map(row)),
+                rest.length ? h('button.btn.ghost.sm.thread-more', { on: { click: () => { c.showAll = !c.showAll; renderThreads(view); } } }, c.showAll ? 'Hide Quiet Threads' : `Show ${rest.length} Quiet Threads`) : null,
+                c.showAll ? h('div.thread-list', rest.map(row)) : null);
+        }
+        async function pollThreads() {
+            const c = cur;
+            if (!c || c.mode !== 'threads') return;
+            clearTimeout(c.threadTimer);
+            const s = instances.get(c.id);
+            if (!s || s.state !== 'running') {
+                c.threadsBody.replaceChildren(h('div.thread-summary', icon('stop'), h('span.grow', s?.state === 'preparing' ? 'Threads show up once the game is running.' : 'The game isn’t running.')));
+            } else {
+                try { renderThreads(await call('play:threads', { id: c.id })); }
+                catch (err) { if (cur === c) c.threadsBody.replaceChildren(h('div.thread-summary.warn', icon('warn'), h('span.grow', err.message))); }
+            }
+            if (cur === c && c.mode === 'threads') c.threadTimer = setTimeout(pollThreads, 2000);
         }
 
         async function open(id) {
@@ -253,9 +305,18 @@
             const crashBtn = h('button.btn', { on: { click: () => call('play:folder', { id, what: 'crash' }) } }, icon('warn'), 'Crash Reports');
             const analyseBtn = h('button.btn.hidden', { on: { click: async (e) => { e.currentTarget.disabled = true; try { await call('play:analyse', { id }); } catch (err) { UI.Island.error(err); } } } }, icon('bug'), 'Analyse');
             const analysis = h('div.crash-card.hidden');
-            cur = { id, body, scroller, status, stopBtn, forceStopBtn, relaunchBtn, crashBtn, analyseBtn, analysis, lines: [], filter: 'all', query: '', follow: true };
+            const threadsBody = h('div.drawer-body.threads.hidden');
+            cur = { id, packPath: sum.packPath, body, scroller, threadsBody, status, stopBtn, forceStopBtn, relaunchBtn, crashBtn, analyseBtn, analysis, lines: [], filter: 'all', query: '', follow: true, mode: 'log', expanded: new Set(), showAll: false };
 
             const filterSeg = UI.segmented([{ value: 'all', label: 'All' }, { value: 'warn', label: 'Warnings' }, { value: 'error', label: 'Errors' }], 'all', (v) => { cur.filter = v; rerender(); });
+            const logTools = h('div.console-tools');
+            const modeSeg = UI.segmented([{ value: 'log', label: 'Output' }, { value: 'threads', label: 'Threads' }], 'log', (v) => {
+                cur.mode = v;
+                logTools.classList.toggle('hidden', v !== 'log');
+                scroller.classList.toggle('hidden', v !== 'log');
+                threadsBody.classList.toggle('hidden', v !== 'threads');
+                if (v === 'threads') pollThreads(); else clearTimeout(cur.threadTimer);
+            });
             search.addEventListener('input', Lib.debounce(() => { cur.query = search.value.trim().toLowerCase(); rerender(); }, 120));
             const setFollow = (v) => { cur.follow = v; follow.classList.toggle('on', v); if (v) scroller.scrollTop = scroller.scrollHeight; };
             follow.addEventListener('click', () => setFollow(!cur.follow));
@@ -265,7 +326,7 @@
             }), { passive: true });
 
             const d = UI.drawer({
-                onClose: () => { call('play:unsubscribe', { id }); clearInterval(tick); if (cur?.id === id) cur = null; },
+                onClose: () => { call('play:unsubscribe', { id }); clearInterval(tick); clearTimeout(cur?.threadTimer); if (cur?.id === id) cur = null; },
                 content: [
                     h('div.drawer-head',
                         h('div.drawer-title',
@@ -280,11 +341,13 @@
                                     { label: 'Open Logs Folder', icon: 'folder', onClick: () => call('play:folder', { id, what: 'logs' }) }
                                 ]) } }, icon('more')),
                                 h('button.btn.ghost.icon', { title: 'Close', on: { click: () => d.close() } }, icon('x')))),
-                        h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, filterSeg, h('label.search', { style: { flex: 1 } }, icon('search'), search), follow)),
+                        h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, modeSeg, logTools)),
                     analysis,
-                    scroller
+                    scroller,
+                    threadsBody
                 ]
             });
+            logTools.append(filterSeg, h('label.search', { style: { flex: 1 } }, icon('search'), search), follow);
             cur.d = d;
             follow.classList.add('on');
             header(sum);

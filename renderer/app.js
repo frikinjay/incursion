@@ -5,7 +5,16 @@
     let currentView = null;
     let gameVersionsPromise = null;
     // Events can land mid-transition, so pages always mount from this map.
+    // The last few packs' snapshots, newest last, so going back to one shows it at once. Kept small: each can be 1 MB.
     const snapshots = new Map();
+    const SNAPSHOTS_KEPT = 4;
+    const remember = (p, snap) => {
+        snapshots.delete(p);
+        snapshots.set(p, snap);
+        while (snapshots.size > SNAPSHOTS_KEPT) snapshots.delete(snapshots.keys().next().value);
+    };
+    // A load started on hover or press, picked up by the click that usually follows.
+    const prefetched = new Map();
     const freshPacks = new Set();
 
     const App = {
@@ -18,12 +27,41 @@
 
         async refreshLibrary() { state.set({ library: await call('packs:library') }); },
 
+        prefetch(p) {
+            if (!prefetched.has(p)) {
+                const load = call('packs:load', { path: p });
+                prefetched.set(p, load);
+                load.catch(() => {}).finally(() => setTimeout(() => { if (prefetched.get(p) === load) prefetched.delete(p); }, 3000));
+            }
+            return prefetched.get(p);
+        },
+
+        // Prefetch when the pointer rests on a pack for a moment, is pressed, or it gets keyboard focus; passing over
+        // packs on the way somewhere else loads nothing.
+        prefetchOn(el, p) {
+            let timer = null;
+            const go = () => { clearTimeout(timer); App.prefetch(p); };
+            el.addEventListener('pointerenter', () => { timer = setTimeout(go, 120); });
+            el.addEventListener('pointerleave', () => clearTimeout(timer));
+            el.addEventListener('pointerdown', go);
+            el.addEventListener('focus', go);
+            return el;
+        },
+
+        // A pack seen before opens at once with what's known and refreshes when its load returns.
         async go(route, { morphFrom } = {}) {
             if (route.name === 'pack') {
-                let snapshot;
-                try { snapshot = await call('packs:load', { path: route.path }); }
-                catch (err) { UI.Island.error(err); return; }
-                snapshots.set(route.path, snapshot);
+                const load = App.prefetch(route.path);
+                if (snapshots.has(route.path)) {
+                    load.then((fresh) => {
+                        remember(route.path, fresh);
+                        const now = state.get().route;
+                        if (now.name === 'pack' && now.path === route.path) { state.set({ snapshot: fresh }); currentView?.update?.(fresh); }
+                    }).catch(UI.Island.error);
+                } else {
+                    try { remember(route.path, await load); }
+                    catch (err) { UI.Island.error(err); return; }
+                }
             }
             if (morphFrom) morphFrom.style.viewTransitionName = 'pack-icon';
             await transition(() => {
@@ -80,13 +118,14 @@
         list.replaceChildren(...library.map(p => {
             const active = route.name === 'pack' && route.path === p.path;
             const updates = active && snapshot ? Object.keys(snapshot.updates).length : 0;
-            return h(`button.nav-item.nav-pack${active ? '.active' : ''}${p.available ? '' : '.unavailable'}`, {
+            const item = h(`button.nav-item.nav-pack${active ? '.active' : ''}${p.available ? '' : '.unavailable'}`, {
                 title: p.available ? p.name : `Folder not found: ${p.path}`,
                 on: { click: (e) => { if (!active) App.go({ name: 'pack', path: p.path }, { morphFrom: e.currentTarget.querySelector('img') }); } }
             },
             img(p.icon, 'squircle'),
             h('span.label', p.name),
             updates ? h('span.dot', { title: `${updates} updates available` }) : h('span.count', p.modCount ?? ''));
+            return p.available && !active ? App.prefetchOn(item, p.path) : item;
         }));
     }
     state.sub(renderSidebar);
@@ -116,7 +155,7 @@
         if (type === 'task') UI.Island.task(payload);
         else if (type === 'downloads') UI.Downloads.update(payload.items);
         else if (type === 'pack') {
-            snapshots.set(payload.meta.path, payload);
+            if (snapshots.has(payload.meta.path)) remember(payload.meta.path, payload);
             const { route } = state.get();
             if (route.name === 'pack' && route.path === payload.meta.path) {
                 state.set({ snapshot: payload });

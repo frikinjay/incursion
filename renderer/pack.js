@@ -31,6 +31,45 @@
         const same = (h1 && h1 === h2) || m.installedFiles.modrinth === m.installedFiles.curseforge || (c1 && c1 === c2) || mr === cf;
         return { same: !!same, mr, cf, mrShort: c1 || mr, cfShort: c2 || cf };
     }
+    // "None", unexpanded placeholders like ${mod_license} and bare links all count as unknown.
+    const NO_LICENSE = /^(none|not specified|unspecified|unknown|n\/?a|-|\?)?$/i;
+    function licenseText(l) {
+        if (!l) return null;
+        const s = String(typeof l === 'string' ? l : (l.id && !/^LicenseRef-/i.test(l.id) ? l.id : l.name || l.id.replace(/^LicenseRef-/i, '').replace(/-/g, ' '))).trim();
+        if (NO_LICENSE.test(s) || /\$\{/.test(s) || /^https?:\/\/\S+$/i.test(s)) return null;
+        return /^(arr|all rights reserved)$/i.test(s) ? 'All Rights Reserved' : s;
+    }
+    // Spellings of the same license compare equal: "LGPL-3.0-only", "GNU LGPLv3" and "GNU Lesser General Public License
+    // v3.0"; "MIT" and "MIT (https://…)"; "GPL-3.0-or-later" and "GNU GPL 3.0".
+    function licenseKey(s) {
+        let k = String(s || '').toLowerCase().replace(/https?:\/\/\S+/g, '').replace(/\([^)]*\)/g, '');
+        k = k.replace(/gnu\s*/g, '').replace(/(lesser|library) general public licen[sc]e/g, 'lgpl').replace(/affero general public licen[sc]e/g, 'agpl')
+            .replace(/general public licen[sc]e/g, 'gpl').replace(/mozilla public licen[sc]e/g, 'mpl').replace(/apache licen[sc]e/g, 'apache')
+            .replace(/creative commons/g, 'cc').replace(/attribution/g, 'by').replace(/noncommercial/g, 'nc').replace(/sharealike/g, 'sa').replace(/noderivatives|noderivs/g, 'nd');
+        k = k.replace(/licenseref-?/, '').replace(/or[\s-]*later|\+|only/g, '').replace(/licen[sc]e/g, '').replace(/version/g, '').replace(/[^a-z0-9]/g, '')
+            .replace(/v(?=\d)/g, '').replace(/(\d)0+(?=$|[a-z])/g, '$1');
+        return k === 'allrightsreserved' ? 'arr' : k;
+    }
+    // A license a platform lists wins over what the jars declare. Only Modrinth lists one (CurseForge's API doesn't), so
+    // the jars count only without it: { label } when they agree or one is known, { modrinth, curseforge } when they
+    // differ, or null. `fromFile` marks a license read from the jar.
+    function licenseOf(m) {
+        const url = m.licenses?.modrinth?.url || null;
+        const listed = licenseText(m.licenses?.modrinth);
+        if (listed) return { label: listed, url };
+        const jar = m.contents?.licenses || {};
+        const mr = m.installedFiles?.modrinth ? licenseText(jar.modrinth) : null;
+        const cf = m.installedFiles?.curseforge ? licenseText(jar.curseforge) : null;
+        if (!mr && !cf) return null;
+        if (!mr || !cf || licenseKey(mr) === licenseKey(cf)) return { label: mr || cf, url, fromFile: true };
+        return { modrinth: mr, curseforge: cf, url, fromFile: true };
+    }
+    // Mirrors content.folderOf in util/content.js.
+    function folderOf(meta, m) {
+        const t = Lib.typeOf(m);
+        return t.movable ? (m.installDir || meta.installDirs?.[t.id] || t.folder) : t.folder;
+    }
+
     // 'platform', 'manual' (a file added by hand), 'pending' (CurseForge blocks app downloads, no file yet) or null.
     function sideState(m, pl) {
         const r = m.manual?.[pl];
@@ -46,7 +85,10 @@
         return { from: r.from, was: r.version || r.sourceFile, now: (r.from === 'modrinth' ? m.meta?.mrVersionNumber : m.meta?.cfDisplayName) || now };
     }
     const isLocal = (m) => !m.ids.curseforge && !m.ids.modrinth && !!m.ids.local;
-    // Lines like "Modrinth: made for Minecraft 1.21.1" for each platform file that doesn't fit the pack.
+    const licenseBits = (lic) => (lic.label
+        ? h('span.lic', { title: `License: ${lic.label}\n${lic.fromFile ? 'Declared in the mod file; no platform lists one.' : 'Listed on Modrinth.'}` }, lic.label)
+        : h('span.lic', { title: `The files declare different licenses (no platform lists one)\nModrinth file: ${lic.modrinth || 'unknown'}\nCurseForge file: ${lic.curseforge || 'unknown'}` },
+            h('span.plat.mr', lic.modrinth || '?'), ' ', h('span.plat.cf', lic.curseforge || '?')));
     const compatLines = (bad) => ['modrinth', 'curseforge'].filter(pl => bad?.[pl]).map(pl => `${PL_NAME[pl]}: ${bad[pl].map(r => r.text).join('; ')}`);
     function sidesTitle(m, bad) {
         return ['modrinth', 'curseforge'].map(pl => {
@@ -67,7 +109,6 @@
             }));
     }
 
-    // "Wrong Minecraft", "Wrong Loader" or "Needs Newer NeoForge"; "Incompatible" when several apply.
     function incompatLabel(bad, loader) {
         const kinds = new Set(Object.values(bad).flat().map(r => r.kind));
         if (kinds.size > 1) return 'Incompatible';
@@ -107,7 +148,9 @@
                     play.el[0],
                     play.el[2],
                     profileBtn,
-                    h('button.btn.lg', { on: { click: () => Browse.open(snap) } }, icon('plus'), h('span.lbl', 'Add Content')),
+                    h('div.btn-group',
+                        h('button.btn.lg', { on: { click: () => Browse.open(snap) } }, icon('plus'), h('span.lbl', 'Add Content')),
+                        h('button.btn.lg.icon', { title: 'Add Local File… (mods, resource packs, shaders, data packs)', 'aria-label': 'Add Local File', on: { click: () => LocalFiles.open(snap) } }, icon('file'))),
                     updatesBtn,
                     h('div.btn-group',
                         play.el[1],
@@ -251,7 +294,29 @@
 
     function ModsTab(container, page, snapshot) {
         let snap = snapshot;
-        const ui = { filter: 'all', type: 'any', platform: 'any', side: 'any', sort: 'name', query: '' };
+        const ui = { filter: 'all', type: 'any', platform: 'any', side: 'any', license: 'any', sort: 'name', query: '' };
+        // Each mod's licenses as comparison keys ('unknown' when none is known), worked out once per snapshot object.
+        const licenseCache = new WeakMap();
+        const licensesFor = (m) => {
+            if (!licenseCache.has(m)) {
+                const l = licenseOf(m);
+                const labels = !l ? [] : l.label ? [l.label] : [l.modrinth, l.curseforge].filter(Boolean);
+                licenseCache.set(m, labels.length ? labels.map(x => ({ key: licenseKey(x), label: x })) : [{ key: 'unknown', label: 'Unknown' }]);
+            }
+            return licenseCache.get(m);
+        };
+        // The License menu: every license in the pack, most used first, under its most common spelling.
+        const licenseOptions = () => {
+            const seen = new Map();
+            for (const m of snap.meta.mods) for (const { key, label } of licensesFor(m)) {
+                const e = seen.get(key) || seen.set(key, { n: 0, labels: new Map() }).get(key);
+                e.n++;
+                e.labels.set(label, (e.labels.get(label) || 0) + 1);
+            }
+            const rows = [...seen].map(([key, e]) => ({ key, n: e.n, label: [...e.labels].sort((a, b) => b[1] - a[1])[0][0] }))
+                .sort((a, b) => (a.key === 'unknown') - (b.key === 'unknown') || b.n - a.n || a.label.localeCompare(b.label));
+            return [{ value: 'any', label: 'Any License', short: 'License' }, ...rows.map(r => ({ value: r.key, label: `${r.label} (${r.n})`, short: r.label.length > 18 ? `${r.label.slice(0, 17)}…` : r.label }))];
+        };
         let filtered = [];
         let rowKeys = [];   // unique even if two entries ever share a mod key
         const rowCache = new Map();
@@ -281,8 +346,9 @@
                 { value: 'differ', label: 'Different Versions per Platform', short: 'Differ' }, { value: 'manual', label: 'Files Added by Hand', short: 'By Hand' }] }),
             UI.picker({ label: 'Side', value: ui.side, onChange: v => { ui.side = v; refilter(true); }, options: [
                 { value: 'any', label: 'Client and Server', short: 'Side' }, { value: 'client', label: 'Client Only' }, { value: 'server', label: 'Server Only' }] }),
+            UI.picker({ label: 'License', value: ui.license, onChange: v => { ui.license = v; refilter(true); }, options: licenseOptions }),
             UI.picker({ label: 'Sort By', value: ui.sort, onChange: v => { ui.sort = v; refilter(true); }, options: [
-                { value: 'name', label: 'Name (A to Z)', short: 'Sort' }, { value: 'name-desc', label: 'Name (Z to A)', short: 'Z to A' }, { value: 'author', label: 'Author' },
+                { value: 'name', label: 'Name (A to Z)', short: 'Sort' }, { value: 'name-desc', label: 'Name (Z to A)', short: 'Z to A' }, { value: 'author', label: 'Author' }, { value: 'license', label: 'License (A to Z)', short: 'License' },
                 { value: 'added', label: 'Recently Added' }, { value: 'updated', label: 'Recently Updated' }] })),
             selectBtn,
             h('label.search', icon('search'), searchInput));
@@ -359,6 +425,7 @@
                     if (ui.side === 'client' && !(s.client && !s.server)) return false;
                     if (ui.side === 'server' && !(s.server && !s.client)) return false;
                 }
+                if (ui.license !== 'any' && !licensesFor(m).some(x => x.key === ui.license)) return false;
                 if (q) {
                     const hay = `${m.names?.curseforge || ''} ${m.names?.modrinth || ''} ${m.authors?.curseforge || ''} ${m.authors?.modrinth || ''} ${m.notes || ''}`.toLowerCase();
                     if (!hay.includes(q)) return false;
@@ -371,6 +438,10 @@
             if (ui.sort === 'name') list.sort(byName);
             else if (ui.sort === 'name-desc') list.sort((a, b) => byName(b, a));
             else if (ui.sort === 'author') list.sort((a, b) => (!authorOf(a) - !authorOf(b)) || collator.compare(authorOf(a), authorOf(b)) || byName(a, b));
+            else if (ui.sort === 'license') {
+                const lic = (m) => licensesFor(m)[0];
+                list.sort((a, b) => ((lic(a).key === 'unknown') - (lic(b).key === 'unknown')) || collator.compare(lic(a).label, lic(b).label) || byName(a, b));
+            }
             else if (ui.sort === 'added') list.sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0));
             else list.sort((a, b) => (b.updatedAt || b.dateAdded || 0) - (a.updatedAt || a.dateAdded || 0));
             filtered = list;
@@ -408,7 +479,7 @@
 
         const rowSig = (m) => {
             const k = modKey(m);
-            return `${m.meta?.mrVersionId}|${m.meta?.cfFileId}|${JSON.stringify(Object.entries(snap.updates[k] || {}).map(([pl, u]) => [pl, u.versionId || u.fileId]))}|${!!snap.missing[k]}|${modTitle(m)}|${modIcon(m)}|${m.pinned}|${m.side}|${!!m.disabled}|${selecting}|${selected.has(k)}|${JSON.stringify(snap.compat?.[k] || null)}`;
+            return `${m.meta?.mrVersionId}|${m.meta?.cfFileId}|${JSON.stringify(Object.entries(snap.updates[k] || {}).map(([pl, u]) => [pl, u.versionId || u.fileId]))}|${!!snap.missing[k]}|${modTitle(m)}|${modIcon(m)}|${m.pinned}|${m.side}|${!!m.disabled}|${selecting}|${selected.has(k)}|${JSON.stringify(snap.compat?.[k] || null)}|${JSON.stringify(licenseOf(m))}|${folderOf(snap.meta, m)}`;
         };
 
         function buildRow(m) {
@@ -419,6 +490,8 @@
             const side = sideOf(m);
             const author = m.authors?.curseforge || m.authors?.modrinth;
             const pv = platformVersions(m, snap.meta.gameVersion);
+            const lic = licenseOf(m);
+            const folder = folderOf(snap.meta, m);
             const actions = h('div.act');
             const sw = UI.toggle(!m.disabled, (on) => {
                 call('packs:disable', { path: snap.meta.path, keys: [k], disabled: !on })
@@ -453,10 +526,11 @@
                     m.pinned ? h('span.chip.sm.accent', { title: 'Pinned. Updates skip this item.' }, icon('pin'), 'Pinned') : null,
                     m.disabled ? h('span.chip.sm', { title: 'Turned off: its files end in .disabled and Play leaves it out.' }, 'Off') : null,
                     isLocal(m) ? h('span.chip.sm', { title: 'Not on Modrinth or CurseForge. Exports bundle the file itself.' }, 'Local File') : null,
+                    folder !== Lib.typeOf(m).folder ? h('span.chip.sm.folder', { title: `Installed to ${folder}/ in the game folder` }, icon('folder'), h('span', folder)) : null,
                     ['modrinth', 'curseforge'].some(pl => sideState(m, pl) === 'pending') ? h('span.chip.sm.amber', { title: 'CurseForge doesn’t allow apps to download this mod. Download it yourself from the mod’s details.' }, 'Download Needed') : null,
                     ['modrinth', 'curseforge'].map(pl => copyOutdated(m, pl)).filter(Boolean).map(o => h('span.chip.sm.amber', { title: `The ${PL_NAME[o.from]} file was updated (${o.was} → ${o.now}). The copy stays as it is until you update it.` }, 'Copy Outdated')),
                     miss && !upd ? h('span.chip.sm.amber', icon('warn'), 'File Missing') : null),
-                h('div.sub', author ? `by ${author}` : (m.summary || ''))),
+                h('div.sub', author || lic ? [author ? `by ${author}` : null, author && lic ? h('span.sep', ' · ') : null, lic ? licenseBits(lic) : null] : (m.summary || ''))),
             pv.same
                 ? h('div.file.mono', { title: upd ? updateSummary(m, upd) : versionLabel(m) }, versionLabel(m))
                 : h('div.file.mono.split', { title: upd ? updateSummary(m, upd) : `Modrinth: ${pv.mr}\nCurseForge: ${pv.cf}` },
@@ -585,6 +659,49 @@
         });
     }
 
+    // Add Local File: pick files, see what each one is, then add them as projects (when Modrinth or CurseForge know the
+    // exact file, so updates keep working) or as local files.
+    const LocalFiles = {
+        async open(snap) {
+            let items;
+            try { items = await call('packs:pick-local', { path: snap.meta.path }); } catch (err) { UI.Island.error(err); return; }
+            if (!items?.length) return;
+            const label = (t) => t.one[0].toUpperCase() + t.one.slice(1);
+            const rows = items.map(it => {
+                const where = [it.known.modrinth ? 'Modrinth' : null, it.known.curseforge ? 'CurseForge' : null].filter(Boolean);
+                it.track = where.length > 0;
+                const typeSel = h('select.field.local-type', { 'aria-label': `Type of ${it.name}`, on: { change: (e) => { it.type = e.currentTarget.value; } } },
+                    Object.values(Lib.TYPES).map(t => h('option', { value: t.id, selected: t.id === it.type }, label(t))));
+                const note = it.inPack ? `Already in this pack as ${it.inPack}.`
+                    : where.length ? `On ${where.join(' and ')}.`
+                    : 'Not on Modrinth or CurseForge. Kept as a local file and bundled in exports.';
+                return h(`div.cell${it.inPack ? '.muted' : ''}`,
+                    h('span.grow', h('div.t.ellipsis', { title: it.name }, it.title), h('div.d.ellipsis', `${it.name} · ${fmt.bytes(it.size)}`), h('div.d', note)),
+                    where.length && !it.inPack ? h('label.local-track', { title: 'Add it as a Modrinth/CurseForge project, so updates work' }, UI.checkbox(true, (v) => { it.track = v; }), 'Track') : null,
+                    it.inPack ? null : typeSel);
+            });
+            const addable = items.filter(i => !i.inPack);
+            const ok = h('button.btn.primary', { disabled: !addable.length }, addable.length === 1 ? 'Add File' : `Add ${addable.length} Files`);
+            const d = UI.dialog({
+                content: [
+                    h('div.dialog-body',
+                        h('h2', items.length === 1 ? 'Add a Local File' : 'Add Local Files'),
+                        h('p', 'Files Modrinth or CurseForge recognise can be tracked like any project. The rest are kept as local files in both editions.'),
+                        h('div.group.local-list', rows)),
+                    h('div.dialog-foot', h('button.btn', { on: { click: () => d.close() } }, 'Cancel'), ok)
+                ]
+            });
+            ok.addEventListener('click', async () => {
+                d.close();
+                try {
+                    const r = await call('packs:add-local', { path: snap.meta.path, items: addable.map(({ file, sha1, type, title, track, known }) => ({ file, sha1, type, title, track, known })) });
+                    if (r.failed.length) UI.Island.toast(`${r.added} Added, ${r.failed.length} Failed`, r.failed[0].error, 'error');
+                    else UI.Island.toast(r.added === 1 ? 'File Added' : `${r.added} Files Added`, '');
+                } catch (err) { UI.Island.error(err); }
+            });
+        }
+    };
+
     const Versions = {
         async open(snap, m) {
             const k = modKey(m);
@@ -644,6 +761,8 @@
                     cell('File', m.installedFiles?.[pl]),
                     cell('Version', pl === 'modrinth' ? m.meta?.mrVersionNumber : m.meta?.cfDisplayName),
                     cell('Author', m.authors?.[pl]),
+                    pl === 'modrinth' && licenseText(m.licenses?.modrinth) ? cell('License', licenseText(m.licenses.modrinth)) : null,
+                    cell('License in File', licenseText(m.contents?.licenses?.[pl])),
                     cell('Size', m.sizes?.[pl] ? fmt.bytes(m.sizes[pl]) : null),
                     snap.missing[k]?.includes(pl) ? h('div.cell', h('span.chip.amber', icon('warn'), 'File Missing on Disk')) : null)
             ] : null;
@@ -700,6 +819,23 @@
             notes.addEventListener('change', () => meta({ notes: notes.value }));
             const bundled = m.contents?.bundled || [];
 
+            const lic = licenseOf(m);
+            const openLicense = lic?.url ? { tabindex: '0', role: 'link', class: 'clickable', on: { click: () => call('shell:open', { url: lic.url }).catch(UI.Island.error) } } : {};
+            const licenseChips = !lic ? [] : lic.label
+                ? [h('span.chip', { title: `License: ${lic.label}. ${lic.fromFile ? 'Declared in the mod file; no platform lists one.' : 'Listed on Modrinth.'}${lic.url ? ' Click to read it.' : ''}`, ...openLicense }, icon('file'), lic.label)]
+                : [h('span.chip', { title: 'License the Modrinth file declares (no platform lists one)' }, h('span.plat.mr', lic.modrinth || 'Unknown')), h('span.chip', { title: 'License the CurseForge file declares (no platform lists one)' }, h('span.plat.cf', lic.curseforge || 'Unknown'))];
+            const t = Lib.typeOf(m);
+            const folder = folderOf(snap.meta, m);
+            const folderCell = t.movable ? h('div.cell',
+                h('span.grow', h('div.t', 'Install Folder'), h('div.d', m.installDir ? 'Set for this item.' : snap.meta.installDirs?.[t.id] ? `The pack’s folder for ${t.many}.` : `The usual folder for ${t.many}.`)),
+                h('span.v.mono.ellipsis', { title: `${folder}/ in the game folder` }, `${folder}/`),
+                h('button.btn.sm', { on: { click: (e) => UI.menu(e.currentTarget, [
+                    { label: 'Change…', icon: 'folder', onClick: async () => {
+                        const v = await UI.prompt({ title: `Install Folder for ${modTitle(m)}`, message: `A folder inside the game folder, for example config/paxi/${t.id === 'datapack' ? 'datapacks' : 'resourcepacks'} for a global pack loader.`, value: m.installDir || '', placeholder: snap.meta.installDirs?.[t.id] || t.folder, confirmLabel: 'Save' });
+                        if (v) meta({ installDir: v });
+                    } },
+                    ...(m.installDir ? [{ label: 'Use the Pack’s Folder', icon: 'history', onClick: () => meta({ installDir: '' }) }] : [])
+                ], { align: 'right' }) } }, 'Change')) : null;
             return [
                 h('div.drawer-body',
                     h('div.inspector-hero',
@@ -713,6 +849,7 @@
                             h('span.chip', icon('monitor'), side.client ? 'Client' : 'No Client'),
                             h('span.chip', icon('server'), side.server ? 'Server' : 'No Server'),
                             m.pinned ? h('span.chip.accent', icon('pin'), 'Pinned') : null,
+                            ...licenseChips,
                             ...compatLines(snap.compat?.[modKey(m)]).map(line => h('span.chip.red', { title: 'This file doesn’t fit the pack’s Minecraft version, loader or loader version. Update it, choose another version below, or turn it off.' }, icon('warn'), line)))),
                     upd ? h('div.update-note.stacked',
                         ...Object.entries(upd).map(([pl, u]) => h('div.update-line',
@@ -729,6 +866,7 @@
                         h('div.cell', h('span.grow', h('div.t', 'Pin Version'), h('div.d', 'Updates skip this mod until you unpin it.')), UI.toggle(!!m.pinned, (v) => meta({ pinned: v }))),
                         h('div.cell', h('span.grow', h('div.t', 'Optional'), h('div.d', 'Players can turn it off when installing the pack.')), UI.toggle(!!m.optional, (v) => meta({ optional: v }))),
                         h('div.cell', h('span.grow', h('div.t', 'Runs On'), h('div.d', 'Decides which exports include it.')), sideSel),
+                        folderCell,
                         h('div.cell.col', h('div.t', 'Notes'), notes),
                         isLocal(m) ? null : h('div.cell.link', { tabindex: '0', on: { click: () => Versions.open(snap, m) } }, icon('history'), h('span.grow', 'Change Version…'), icon('chev')),
                         isLocal(m) ? null : h('div.cell.link', { tabindex: '0', on: { click: () => linkEntry(snap, m) } }, icon('link'), h('span.grow', 'Link Platforms…'), icon('chev'))),

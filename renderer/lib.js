@@ -148,10 +148,10 @@
     }
 
     const TYPES = {
-        mod: { id: 'mod', label: 'Mods', one: 'mod', many: 'mods', icon: 'cube' },
-        resourcepack: { id: 'resourcepack', label: 'Resource Packs', one: 'resource pack', many: 'resource packs', icon: 'image' },
-        shader: { id: 'shader', label: 'Shaders', one: 'shader', many: 'shaders', icon: 'sun' },
-        datapack: { id: 'datapack', label: 'Data Packs', one: 'data pack', many: 'data packs', icon: 'database' }
+        mod: { id: 'mod', label: 'Mods', one: 'mod', many: 'mods', icon: 'cube', folder: 'mods' },
+        resourcepack: { id: 'resourcepack', label: 'Resource Packs', one: 'resource pack', many: 'resource packs', icon: 'image', folder: 'resourcepacks', movable: true },
+        shader: { id: 'shader', label: 'Shaders', one: 'shader', many: 'shaders', icon: 'sun', folder: 'shaderpacks' },
+        datapack: { id: 'datapack', label: 'Data Packs', one: 'data pack', many: 'data packs', icon: 'database', folder: 'datapacks', movable: true }
     };
     const typeOf = (m) => TYPES[typeof m === 'string' ? m : m?.type] || TYPES.mod;
     const contentSummary = (mods) => {

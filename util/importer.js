@@ -360,7 +360,7 @@ async function collectPackwiz(base, { staging, overrides, jars, unknown }, onPro
 // Written before the pack is opened, so nothing else is writing to it yet.
 async function restorePackDetails(target, portable) {
     const meta = await storage.loadPack(target);
-    for (const k of ['id', 'releases', 'links', 'license', 'tags', 'publish', 'launch', 'createdAt', 'modLinks', 'linkPolicy', 'releaseOptions']) if (portable[k] !== undefined) meta[k] = portable[k];
+    for (const k of ['id', 'releases', 'links', 'license', 'tags', 'publish', 'launch', 'createdAt', 'modLinks', 'linkPolicy', 'releaseOptions', 'releaseChannel', 'installDirs']) if (portable[k] !== undefined) meta[k] = portable[k];
     if (typeof portable.icon === 'string' && portable.icon.startsWith('data:')) meta.icon = portable.icon;
     if (!meta.author && portable.author) meta.author = portable.author;
     if (!meta.description && portable.description) meta.description = portable.description;
@@ -373,7 +373,7 @@ function restoreModSettings(entry, portable) {
         (entry.ids.curseforge && Number(m.ids?.curseforge) === Number(entry.ids.curseforge)) ||
         (entry.ids.modrinth && m.ids?.modrinth === entry.ids.modrinth));
     if (!old) return;
-    for (const k of ['pinned', 'optional', 'side', 'notes', 'dateAdded']) if (old[k] !== undefined) entry[k] = old[k];
+    for (const k of ['pinned', 'optional', 'side', 'notes', 'dateAdded', 'installDir']) if (old[k] !== undefined) entry[k] = old[k];
 }
 
 module.exports = { inspect, importPack, restoreModSettings };

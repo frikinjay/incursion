@@ -5,6 +5,7 @@ const { execFile } = require('child_process');
 const storage = require('./storage');
 const downloads = require('./downloads');
 const log = require('./log').scope('launch');
+const threadView = require('./threads');
 const java = require('./java');
 const msauth = require('./msauth');
 
@@ -171,6 +172,18 @@ async function analyseCrash(inst, meta) {
     inst.flush();
     return result;
 }
+// The thread viewer's agent (agent/src). Java can't read it from inside app.asar, so it's copied next to the game
+// files once per version of the jar.
+const AGENT_JAR = path.join(__dirname, '..', 'assets', 'agent', 'incursion-threads.jar');
+async function threadAgentArgs(agentDir) {
+    const buf = await fs.readFile(AGENT_JAR);
+    const jar = path.join(datadir.get(), 'agents', `incursion-threads-${crypto.createHash('sha1').update(buf).digest('hex').slice(0, 10)}.jar`);
+    if (!(await fs.pathExists(jar))) { await fs.ensureDir(path.dirname(jar)); await fs.writeFile(jar, buf); }
+    await fs.ensureDir(agentDir);
+    await fs.remove(path.join(agentDir, 'threads.port')).catch(() => {});
+    return [`-javaagent:${jar}=${agentDir}`];
+}
+
 const PLACED = '.incursion-placed.json';
 
 async function syncMods(meta, gameDir) {
@@ -181,21 +194,36 @@ async function syncMods(meta, gameDir) {
     const platform = require('./content').playPlatform(meta);
     let total = 0, linked = 0, removed = 0, skipped = 0;
     const how = { hard: 0, symbolic: 0, copy: 0 };
-    for (const type of content.ORDER) {
-        const t = content.TYPES[type];
-        const dir = path.join(gameDir, t.folder);
+    // One group per destination: the type's own folder (keyed by type, as before) or a custom folder a resource or data
+    // pack goes to (keyed "type:folder"). Groups placed last time are visited too, so a folder no longer used is emptied.
+    const keyOf = (type, folder) => (folder === content.TYPES[type].folder ? type : `${type}:${folder}`);
+    const groups = new Map(content.ORDER.map(type => [type, { type, folder: content.TYPES[type].folder, mods: [] }]));
+    for (const m of meta.mods) {
+        const type = content.typeOf(m).id;
+        const folder = content.folderOf(meta, m);
+        const k = keyOf(type, folder);
+        if (!groups.has(k)) groups.set(k, { type, folder, mods: [] });
+        groups.get(k).mods.push(m);
+    }
+    for (const k of Object.keys(placedBefore)) {
+        const [type, ...rest] = k.split(':');
+        if (!groups.has(k) && content.TYPES[type] && rest.length) groups.set(k, { type, folder: rest.join(':'), mods: [] });
+    }
+    for (const [k, { type, folder, mods }] of groups) {
+        const dir = path.join(gameDir, ...folder.split('/'));
+        if (!path.resolve(dir).startsWith(path.resolve(gameDir) + path.sep)) continue;
         const wanted = new Map();
-        for (const m of meta.mods.filter(x => content.typeOf(x).id === type)) {
+        for (const m of mods) {
             const f = m.installedFiles?.[platform];
             if (!f) { skipped++; continue; }
             const src = storage.paths.entryFile(meta.path, platform, m);
             if (await fs.pathExists(src)) wanted.set(storage.safeFileName(f), src);
         }
         total += wanted.size;
-        if (!wanted.size && type !== 'mod' && !(placedBefore[type] || []).length) continue;
+        if (!wanted.size && type !== 'mod' && !(placedBefore[k] || []).length) continue;
         await fs.ensureDir(dir);
         const existing = new Set(await fs.readdir(dir));
-        const ours = new Set(placedBefore[type] || []);
+        const ours = new Set(placedBefore[k] || []);
         for (const name of existing) {
             const managed = type === 'mod' ? name.endsWith('.jar') : ours.has(name);
             if (managed && !wanted.has(name)) { await fs.remove(path.join(dir, name)); removed++; }
@@ -206,11 +234,11 @@ async function syncMods(meta, gameDir) {
                 const [a, b] = await Promise.all([fs.stat(src), fs.stat(dest)]).catch(() => [null, null]);
                 if (a && b && a.size === b.size) continue;
                 await fs.remove(dest);
-            } else if (!ours.has(name)) (added[type] ||= []).push(name);
+            } else if (!ours.has(name) && k === type) (added[type] ||= []).push(name);
             how[await placeFile(src, dest)]++;
             linked++;
         }
-        if (type !== 'mod') placedNow[type] = [...wanted.keys()];
+        if (type !== 'mod' && wanted.size) placedNow[k] = [...wanted.keys()];
     }
     await fs.writeJson(placedFile, placedNow).catch(() => {});
     if (added.resourcepack?.length) await enableResourcePacks(gameDir, added.resourcepack).catch(() => {});
@@ -346,6 +374,8 @@ const launcher = {
             });
             if (resolved.missing) throw Object.assign(new Error(`Java ${resolved.missing} isn't installed on this PC. Download it for Incursion, or pick another Java in the pack's settings.`), { code: 'JAVA_MISSING', major: resolved.missing });
             inst.log(`Using Java ${resolved.java.version} (${resolved.java.vendor || 'unknown vendor'}) at ${resolved.java.path}`, 'debug');
+            const agentDir = path.join(datadir.get(), inst.slug, '.incursion');
+            const agentArgs = await threadAgentArgs(agentDir).catch((err) => { log.warn('Thread viewer unavailable:', err.message); return []; });
             const config = {
                 root: ROOT,
                 storage: 'shared',
@@ -354,7 +384,7 @@ const launcher = {
                 minecraft: { version: meta.gameVersion, loader: { loader: meta.loader, version: meta.loaderVersion } },
                 account,
                 memory: { min: Math.min(1024, memoryMax), max: memoryMax },
-                java: { install: 'manual', absolutePath: resolved.java.path, args: [`-Dincursion.instance=${inst.id}`, ...jvmArgs] },
+                java: { install: 'manual', absolutePath: resolved.java.path, args: [`-Dincursion.instance=${inst.id}`, ...agentArgs, ...jvmArgs] },
                 window: { width: settings.windowWidth || 1280, height: settings.windowHeight || 720 }
             };
             const root = datadir.get();
@@ -468,6 +498,16 @@ const launcher = {
             inst.set({ state: 'failed', status: err.message || 'Launch failed', endedAt: Date.now(), progress: null, errorCode: err.code || null, javaMajor: err.major || null });
         });
         return inst.summary();
+    },
+
+    // meta is only used to name the mods that stack frames belong to.
+    async threads(id, meta) {
+        const inst = instances.get(id);
+        if (!inst || inst.state !== 'running') throw new Error('The game isn’t running.');
+        const snap = await threadView.sample(path.join(inst.gameDir || path.join(datadir.get(), inst.slug), '.incursion'));
+        const { view, history } = threadView.analyse(snap, inst.threadHistory, meta);
+        inst.threadHistory = history;
+        return view;
     },
 
     async stop(id, { force = false } = {}) {
@@ -587,4 +627,5 @@ const launcher = {
     slugFor
 };
 
+launcher._syncMods = syncMods;
 module.exports = launcher;

@@ -80,8 +80,7 @@ function slimCfFile(f) {
     };
 }
 
-// What an installed file was published for, kept per platform so the mod list can flag a file that doesn't match the
-// pack's Minecraft version or loader.
+// Which game versions and loaders a file was published for, so the list can flag one that doesn't fit the pack.
 const targetOf = (f) => (f && (f.gameVersions || f.loaders) ? { gameVersions: f.gameVersions || [], loaders: f.loaders || [] } : null);
 
 function slimMrHit(h) {
@@ -99,6 +98,7 @@ function slimMrProject(p) {
         loaders: p.loaders || [], gameVersions: p.game_versions || [],
         env: { client: p.client_side !== 'unsupported', server: p.server_side !== 'unsupported' },
         source: p.source_url || null,
+        license: p.license ? { id: p.license.id || null, name: p.license.name || null, url: p.license.url || null } : null,
         // Descriptions also link dependencies, parent mods and other mods by the same author, so a link is only a
         // candidate (see linkedCfSlug and sameProject).
         cfLinks: cfSlugsIn([p.body, p.source_url, p.wiki_url, p.issues_url, p.discord_url, ...(p.donation_urls || []).map(d => d.url)].join(' '))
@@ -127,14 +127,14 @@ function slimMrVersion(v) {
     };
 }
 
-// Mods match the loader too. Resource packs, shaders and data packs only match the game version.
 // A pack's release channel: 'beta' (the default) takes the newest release or beta, 'release' only releases. Alphas
-// are never picked by channel. Without strict, a project with nothing in the channel still gives its newest release,
-// or failing that its newest file, so it can be added at all; updates are always strict.
+// are never picked by channel. Without strict, a project with nothing in the channel still falls back to its newest
+// release (or newest file), so it can be added at all. Updates are always strict.
 const CHANNEL_TYPES = { beta: ['release', 'beta'], release: ['release'] };
 const channelTypes = (channel) => CHANNEL_TYPES[channel] || CHANNEL_TYPES.beta;
 const CF_TYPE = { 1: 'release', 2: 'beta', 3: 'alpha' };
 
+// Mods have to match the loader too; resource packs, shaders and data packs only the game version.
 function pickCfIndex(slimMod, gameVersion, cfLoader, type = 'mod', { channel = 'beta', strict = false } = {}) {
     const matches = slimMod.indexes.filter((row) => content.cfIndexFits(type, row, gameVersion, cfLoader));
     const allowed = channelTypes(channel);
@@ -157,8 +157,8 @@ async function mrProjects(idsOrSlugs, { ttl = 6 * HOUR, force = false } = {}) {
     const out = new Map();
     const missing = [];
     for (const id of ids) {
-        // "proj2" cache key: entries now include the project type.
-        const hit = force ? undefined : cache.fresh(`mr:proj2:${id}`, ttl);
+        // "proj3" cache key: entries now include the license.
+        const hit = force ? undefined : cache.fresh(`mr:proj3:${id}`, ttl);
         if (hit === undefined) missing.push(id);
         else if (hit) out.set(id, hit);
     }
@@ -166,13 +166,13 @@ async function mrProjects(idsOrSlugs, { ttl = 6 * HOUR, force = false } = {}) {
         const list = await mr(`/projects?${qs({ ids: JSON.stringify(part) })}`);
         const found = new Set();
         for (const p of list.map(slimMrProject)) {
-            cache.set(`mr:proj2:${p.id}`, p);
-            cache.set(`mr:proj2:${p.slug}`, p);
+            cache.set(`mr:proj3:${p.id}`, p);
+            cache.set(`mr:proj3:${p.slug}`, p);
             out.set(p.id, p); out.set(p.slug, p);
             found.add(p.id); found.add(p.slug);
         }
         // Cache misses too, so we don't keep asking for slugs that have no twin.
-        for (const id of part) if (!found.has(id)) cache.set(`mr:proj2:${id}`, null);
+        for (const id of part) if (!found.has(id)) cache.set(`mr:proj3:${id}`, null);
     }));
     return out;
 }
@@ -347,6 +347,8 @@ const api = {
             incompat: { curseforge: c ? c.file.incompat : [], modrinth: m ? m.version.incompat : [] },
             meta: { cfFileId: c ? c.file.id : null, mrVersionId: m ? m.version.id : null, mrVersionNumber: m ? m.version.number : null, mrDate: m ? m.version.date : null, cfDisplayName: c ? c.file.displayName : null },
             targets: { curseforge: c ? targetOf(c.file) : null, modrinth: m ? targetOf(m.version) : null },
+            // CurseForge's API has no license; the scanned jar provides it (contents.licenses).
+            licenses: { modrinth: m?.project?.license || null },
             summary: (c && c.mod.summary) || (m && m.project?.summary) || hint.summary || '',
             dateAdded: Date.now()
         };
@@ -354,7 +356,6 @@ const api = {
 
     // Always bypasses the cache: this is the one place stale data isn't acceptable. Returns only the platforms that
     // changed.
-    //
     // retarget is for moving a pack to another Minecraft version: any different file counts (older ones too), and
     // `missing` lists the platforms with no usable file for that version. skip(mod, platform) leaves a platform out.
     async checkUpdates({ mods, gameVersion, loader, hashOf, retarget = false, skip = () => false, channel = 'beta' }, onProgress = () => {}) {
@@ -511,6 +512,7 @@ const api = {
                 mod.icons.modrinth = p.icon;
                 mod.environments.modrinth = p.env;
                 mod.links.modrinth = `https://modrinth.com/${content.typeOf(mod).mrType}/${p.slug}`;
+                (mod.licenses ||= {}).modrinth = p.license || null;
                 if (!mod.authors.modrinth && owners.get(p.team)) mod.authors.modrinth = owners.get(p.team);
                 if (!mod.ids.curseforge) mod.summary = p.summary;
             }
@@ -606,7 +608,6 @@ const api = {
         return [...results.values()];
     },
 
-    // On the release channel only releases are listed.
     async listVersions({ platform, id, gameVersion, loader, type = 'mod', channel = 'beta' }) {
         const l = loaderInfo(loader);
         const shown = (v) => channel !== 'release' || v.type === 'release';

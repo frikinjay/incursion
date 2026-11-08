@@ -349,17 +349,19 @@
         return root;
     }
 
-    function picker({ label, options, value, onChange }) {
+    // options may be a function, for menus whose choices change (read when the menu opens).
+    function picker({ label, options: given, value, onChange }) {
+        const options = () => (typeof given === 'function' ? given() : given);
         const text = h('span.lbl');
         const btn = h('button.menu-btn', { type: 'button', 'aria-haspopup': 'menu' }, text, icon('chev-down'));
         const sync = () => {
-            const o = options.find(x => x.value === value);
+            const o = options().find(x => x.value === value);
             text.textContent = o?.short || o?.label || label;
-            btn.classList.toggle('set', value !== options[0].value);
+            btn.classList.toggle('set', value !== options()[0].value);
         };
         btn.addEventListener('click', () => menu(btn, [
             { heading: label },
-            ...options.map(o => ({ label: o.label, checked: o.value === value, onClick: () => { value = o.value; sync(); onChange(value); } }))
+            ...options().map(o => ({ label: o.label, checked: o.value === value, onClick: () => { value = o.value; sync(); onChange(value); } }))
         ]));
         sync();
         return btn;

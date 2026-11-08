@@ -451,6 +451,26 @@ handle('packs:manual-file', async ({ path: p, key, platform, source }) => {
     if (r.canceled || !r.filePaths[0]) return null;
     return packs.setManualFile(p, key, platform, { source: 'file', file: r.filePaths[0] });
 });
+// Add Local File: only files picked in this dialog can be added, so the page can't ask for arbitrary paths.
+const pickedLocal = new Set();
+handle('packs:pick-local', async ({ path: p }) => {
+    const r = await dialog.showOpenDialog(win, { title: 'Choose Files to Add', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Mods, resource packs, shaders and data packs', extensions: ['jar', 'zip'] }] });
+    if (r.canceled || !r.filePaths.length) return [];
+    pickedLocal.clear();
+    for (const f of r.filePaths) pickedLocal.add(path.resolve(f));
+    return packs.inspectLocalFiles(p, r.filePaths);
+});
+handle('packs:add-local', async ({ path: p, items }) => {
+    const ok = (Array.isArray(items) ? items : []).filter(i => pickedLocal.has(path.resolve(String(i?.file || ''))));
+    if (!ok.length) throw new Error('Choose the files again.');
+    const r = await packs.addLocalFiles(p, ok);
+    pickedLocal.clear();
+    return r;
+});
+handle('play:threads', async ({ id }) => {
+    const inst = launcher.list().find(i => i.id === id);
+    return launcher.threads(id, inst ? await packs.metaOf(inst.packPath).catch(() => null) : null);
+});
 handle('packs:manual-remove', ({ path: p, key, platform }) => packs.removeManualFile(p, key, platform));
 // Leftover jars go to the trash, never a hard delete. Plain names inside a platform mods folder only.
 handle('packs:trash-jars', async ({ path: p, files: list }) => {

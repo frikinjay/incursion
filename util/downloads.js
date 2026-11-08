@@ -1,5 +1,4 @@
 // File transfers and the list of downloads the renderer shows, one bar per file.
-//
 // A download only fails when the server stops sending: no bytes for STALL_MS drops the connection and resumes from the
 // last byte with a Range request, and it gives up after MAX_IDLE attempts in a row that got nothing. Files over
 // SEGMENT_MIN are fetched as up to SEGMENTS ranges in parallel, since a congested CDN edge often throttles each
@@ -16,7 +15,6 @@ const SEGMENT_MIN = 1024 * 1024;
 const SEGMENTS = 4;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// ---- tracker -------------------------------------------------------------------------------------------------------
 
 let emit = () => {};
 let seq = 0;
@@ -68,7 +66,6 @@ function external(name, url) { return track(name, url); }
 
 const mb = (n) => `${(n / 1048576).toFixed(n < 10485760 ? 2 : 1)} MB`;
 
-// ---- transfer ------------------------------------------------------------------------------------------------------
 
 class StallError extends Error {}
 class NoRangeError extends Error {}
@@ -85,7 +82,6 @@ async function open(url, from, to) {
     return request(url, { as: 'response', stream: true, timeout: HEADERS_MS, headers });
 }
 
-// Writes the response into fh at seg.pos until the body ends or the segment is full.
 async function pump(res, seg, fh, onBytes, ctx) {
     const reader = res.body.getReader();
     try {

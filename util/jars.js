@@ -78,7 +78,9 @@ function parseModsToml(text, jarVersion) {
             void mandatory;
         }
     }
-    return { mods, incompatible, clientSideOnly, depSides, depends, platform };
+    // license is a top-level key, before the first [[mods]] table.
+    const lic = blocks[0].match(/^\s*license\s*=\s*["']([^"'\n]+)["']/m);
+    return { mods, incompatible, clientSideOnly, depSides, depends, platform, license: lic ? lic[1].trim() : null };
 }
 
 // The Minecraft and loader version ranges a mod's own metadata asks for (null when it doesn't say). In mods.toml a bare
@@ -120,7 +122,7 @@ function classStrings(buf) {
 async function describe(src, depth = 0) {
     const entries = await src.entries();
     const get = async (n) => (entries.has(n) ? src.readEntry(entries.get(n)) : null);
-    const out = { ids: [], bundled: [], incompatible: [], depends: [], loaders: [], side: { declared: null, clientDeps: false, serverCrash: null }, requires: { minecraft: null, loader: null } };
+    const out = { ids: [], bundled: [], incompatible: [], depends: [], loaders: [], side: { declared: null, clientDeps: false, serverCrash: null }, requires: { minecraft: null, loader: null }, license: null };
     const nested = [];
     const serverEntrypoints = [];
 
@@ -134,6 +136,7 @@ async function describe(src, depth = 0) {
             for (const [id, range] of Object.entries(j.breaks || {})) out.incompatible.push({ id, versions: [].concat(range).join(' || ') });
             for (const [id, range] of Object.entries(j.depends || {})) if (!PLATFORM_IDS.has(id)) out.depends.push({ id, versions: [].concat(range).join(' || ') || '*' });
             out.requires = requiresOf(j.depends || {});
+            out.license = [].concat(j.license || []).filter(x => typeof x === 'string').join(', ') || null;
             for (const jar of j.jars || []) if (jar?.file) nested.push(jar.file);
             if (j.environment === 'client' || j.environment === 'server') out.side.declared = j.environment;
             for (const key of ['main', 'server']) for (const e of [].concat(j.entrypoints?.[key] || [])) serverEntrypoints.push(typeof e === 'string' ? e : e?.value);
@@ -150,6 +153,7 @@ async function describe(src, depth = 0) {
             if (id && !d?.optional && !PLATFORM_IDS.has(id) && !out.depends.some(x => x.id === id)) out.depends.push({ id, versions: [].concat(d?.versions || '*').join(' || ') });
         }
         if (!out.requires.minecraft && !out.requires.loader) out.requires = requiresOf(platformDeps);
+        out.license ||= [].concat(j?.metadata?.license || []).map(x => (typeof x === 'string' ? x : x?.id)).filter(Boolean).join(', ') || null;
         const root = parseJsonLoose(quilt);
         const env = root?.minecraft?.environment;
         if (env === 'client' || env === 'dedicated_server') out.side.declared = env === 'client' ? 'client' : 'server';
@@ -165,6 +169,7 @@ async function describe(src, depth = 0) {
         out.incompatible.push(...parsed.incompatible);
         for (const d of parsed.depends) if (!out.depends.some(x => x.id === d.id)) out.depends.push(d);
         if (!out.requires.minecraft && !out.requires.loader) out.requires = requiresOf(parsed.platform, { maven: true });
+        out.license ||= parsed.license;
         if (parsed.clientSideOnly) out.side.declared = 'client';
         // Forge / NeoForge client mods mark every dependency side="CLIENT". Common mods use BOTH.
         if (parsed.depSides.length && parsed.depSides.every(x => x === 'CLIENT')) out.side.clientDeps = true;

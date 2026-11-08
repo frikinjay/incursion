@@ -32,6 +32,7 @@
         if (App.freshPacks.has(p.path)) { el.classList.add('enter'); App.freshPacks.delete(p.path); }
         else if (i < 8 && LibraryView.firstMount) { el.classList.add('enter'); el.style.animationDelay = `${i * 60}ms`; }
         el._destroy = () => play?.destroy();
+        if (p.available) App.prefetchOn(el, p.path);
         return el;
     }
 

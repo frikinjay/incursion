@@ -13,7 +13,7 @@ async function pickFile(meta, m) {
     for (const pl of PLATFORMS) {
         if (!m.installedFiles?.[pl]) continue;
         const file = storage.paths.entryFile(meta.path, pl, m);
-        if (await fs.pathExists(file)) return { platform: pl, file, name: storage.safeFileName(m.installedFiles[pl]), folder: content.typeOf(m).folder };
+        if (await fs.pathExists(file)) return { platform: pl, file, name: storage.safeFileName(m.installedFiles[pl]), folder: content.folderOf(meta, m) };
     }
     return null;
 }
@@ -92,7 +92,7 @@ async function exportPackwiz(meta, outDir, onProgress = () => {}) {
             // No platform to download it from: the file itself goes into the pack.
             const own = await pickFile(meta, m);
             if (!own) { skipped.push(m.names.modrinth || m.names.curseforge); continue; }
-            const rel = `${t.folder}/${own.name}`;
+            const rel = `${content.folderOf(meta, m)}/${own.name}`;
             const buf = await fs.readFile(own.file);
             await fs.outputFile(path.join(dir, rel), buf);
             index.push({ file: rel, hash: sha256(buf) });
@@ -123,7 +123,7 @@ async function exportPackwiz(meta, outDir, onProgress = () => {}) {
         if (cf) lines.push('[update.curseforge]', `file-id = ${Number(m.meta.cfFileId)}`, `project-id = ${Number(m.ids.curseforge)}`);
         if (mr) lines.push('[update.modrinth]', `mod-id = ${tomlStr(m.ids.modrinth)}`, `version = ${tomlStr(m.meta?.mrVersionId || '')}`);
         const slug = m.slugs?.modrinth || m.slugs?.curseforge || storage.safeFileName(m.installedFiles.modrinth || m.installedFiles.curseforge).replace(/\.[^.]+$/, '');
-        const rel = `${t.folder}/${safeName(slug)}.pw.toml`;
+        const rel = `${content.folderOf(meta, m)}/${safeName(slug)}.pw.toml`;
         const body = lines.join('\n') + '\n';
         await fs.outputFile(path.join(dir, rel), body);
         index.push({ file: rel, hash: sha256(Buffer.from(body)), metafile: true });

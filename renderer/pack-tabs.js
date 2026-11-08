@@ -571,19 +571,37 @@
             h('label.label', 'When This Pack and You Disagree, Use'), policySeg,
             linksBody);
 
-        // Which mod files updates, Add Content and Change Version offer. Changing it checks for updates again.
+        // Switching channels re-checks updates, since what counts as an update just changed.
         const channelSeg = UI.segmented([{ value: 'beta', label: 'Releases and Betas' }, { value: 'release', label: 'Releases Only' }], m.releaseChannel === 'release' ? 'release' : 'beta',
             (v) => call('packs:info', { path: m.path, fields: { releaseChannel: v } })
                 .then(() => call('packs:check', { path: m.path }))
                 .then(r => UI.Island.toast(v === 'release' ? 'Releases Only' : 'Releases and Betas', r.count ? fmt.plural(r.count, 'update') + ' available' : 'Everything is up to date'))
                 .catch(UI.Island.error));
 
+        let dirs = { ...(m.installDirs || {}) };
+        const foldersGroup = h('div.group', { style: { margin: '6px 0 0' } });
+        const setDir = (typeId, v) => call('packs:info', { path: m.path, fields: { installDirs: { ...dirs, [typeId]: v } } })
+            .then((r) => { dirs = { ...(r.meta.installDirs || {}) }; renderFolders(); UI.Island.toast('Saved', v ? `${Lib.TYPES[typeId].label} go to ${v}/` : `${Lib.TYPES[typeId].label} use ${Lib.TYPES[typeId].folder}/`); })
+            .catch(UI.Island.error);
+        function renderFolders() {
+            foldersGroup.replaceChildren(...Object.values(Lib.TYPES).filter(t => t.movable).map(t => h('div.cell',
+                h('span.grow', h('div.t', t.label), h('div.d.mono.ellipsis', { title: `${dirs[t.id] || t.folder}/ in the game folder` }, `${dirs[t.id] || t.folder}/`)),
+                dirs[t.id] ? h('button.btn.ghost.sm', { on: { click: () => setDir(t.id, '') } }, 'Use Default') : null,
+                h('button.btn.sm', { on: { click: async () => {
+                    const v = await UI.prompt({ title: `Install Folder for ${t.label}`, message: `A folder inside the game folder, for example config/paxi/${t.folder} for a global pack loader. Items can still choose their own in their details.`, value: dirs[t.id] || '', placeholder: t.folder, confirmLabel: 'Save' });
+                    if (v) setDir(t.id, v);
+                } } }, 'Change…'))));
+        }
+        renderFolders();
+
         container.append(h('div.cards',
             h('section.card',
-                h('h3', 'Mod Versions'),
+                h('h3', 'Content'),
                 h('p', 'Which files updates, Add Content and Change Version offer, on both CurseForge and Modrinth.'),
                 h('label.label', 'Release Channel'), channelSeg,
-                h('p.hint', 'Releases and Betas offers the newest stable or beta file. Releases Only never offers betas; a mod that only has betas can’t be added until you switch. Alpha files are never offered.')),
+                h('p.hint', 'Releases and Betas offers the newest stable or beta file. Releases Only never offers betas; a mod that only has betas can’t be added until you switch. Alpha files are never offered.'),
+                h('label.label', { style: { marginTop: '16px' } }, 'Install Folders'), foldersGroup,
+                h('p.hint', 'Where Play and exports put these inside the game folder. CurseForge exports bundle files from another folder in overrides, since CurseForge can only install to the usual folders.')),
             h('section.card',
                 h('h3', 'Launch'),
                 h('p', 'How Minecraft starts for this pack. Other packs keep their own settings.'),

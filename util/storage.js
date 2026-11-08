@@ -262,7 +262,9 @@ const storage = {
         if (!meta.loaderVersion) throw new Error('Set a loader version for this pack before exporting (Edit pack).');
         const mods = meta.mods.filter(m => m.ids.curseforge);
         const skipped = mods.filter(m => !Number(m.meta?.cfFileId)).map(m => m.names.curseforge);
-        const included = mods.filter(m => Number(m.meta?.cfFileId));
+        // CurseForge installs each file to its type's folder, so one going to a custom folder ships in overrides instead.
+        const custom = (m) => content.folderOf(meta, m) !== content.typeOf(m).folder;
+        const included = mods.filter(m => Number(m.meta?.cfFileId) && !(custom(m) && !m.manual?.curseforge));
         const manifest = {
             minecraft: { version: meta.gameVersion, modLoaders: [{ id: `${l.cfManifest}-${meta.loaderVersion}`, primary: true }] },
             manifestType: 'minecraftModpack',
@@ -283,6 +285,12 @@ const storage = {
             archive.append(JSON.stringify(storage.portableMeta(meta), null, 2), { name: META_FILE });
             await appendOverrides(archive, meta.path, 'overrides');
             await appendManualFiles(archive, meta, 'curseforge', bundled);
+            for (const m of mods.filter(x => Number(x.meta?.cfFileId) && custom(x) && !x.manual?.curseforge)) {
+                const src = entryFile(meta.path, 'curseforge', m);
+                if (!(await fs.pathExists(src))) continue;
+                archive.file(src, { name: `overrides/${content.folderOf(meta, m)}/${safeFileName(m.installedFiles.curseforge)}` });
+                bundled.push(m.names?.curseforge || m.installedFiles.curseforge);
+            }
         }, onProgress);
         return { path: file, count: included.length + bundled.length, skipped, bundled };
     },
@@ -299,7 +307,7 @@ const storage = {
             const side = sideOf(mod);
             const want = mod.optional ? 'optional' : 'required';
             files.push({
-                path: `${content.typeOf(mod).folder}/${safeFileName(mod.installedFiles.modrinth)}`,
+                path: `${content.folderOf(meta, mod)}/${safeFileName(mod.installedFiles.modrinth)}`,
                 hashes: await hashFile(local, ['sha1', 'sha512']),
                 env: { client: side.client ? want : 'unsupported', server: side.server ? want : 'unsupported' },
                 downloads: [mod.fileLinks.modrinth],
@@ -356,7 +364,7 @@ storage.exportServer = async function exportServer(meta, outDir, onProgress = ()
             let picked = null;
             for (const pl of ['modrinth', 'curseforge']) {
                 const f = m.installedFiles?.[pl];
-                if (f && (await fs.pathExists(entryFile(meta.path, pl, m)))) { picked = { file: entryFile(meta.path, pl, m), name: safeFileName(f), folder: content.typeOf(m).folder }; break; }
+                if (f && (await fs.pathExists(entryFile(meta.path, pl, m)))) { picked = { file: entryFile(meta.path, pl, m), name: safeFileName(f), folder: content.folderOf(meta, m), type: content.typeOf(m).id }; break; }
             }
             if (picked) jars.push(picked); else skipped.push(m.names.modrinth || m.names.curseforge);
         }
@@ -399,7 +407,7 @@ storage.exportServer = async function exportServer(meta, outDir, onProgress = ()
         const readme = [
             `${meta.name} ${meta.version || ''} server`.trim(),
             '',
-            `Minecraft ${meta.gameVersion}, ${l.label} ${meta.loaderVersion}, ${jars.filter(j => j.folder === 'mods').length} server-side mods${jars.some(j => j.folder === 'datapacks') ? ` and ${jars.filter(j => j.folder === 'datapacks').length} data packs (in datapacks/, for a global data pack loader such as Paxi or Open Loader)` : ''}.`,
+            `Minecraft ${meta.gameVersion}, ${l.label} ${meta.loaderVersion}, ${jars.filter(j => j.type === 'mod').length} server-side mods${jars.some(j => j.type === 'datapack') ? ` and ${jars.filter(j => j.type === 'datapack').length} data packs (in ${[...new Set(jars.filter(j => j.type === 'datapack').map(j => `${j.folder}/`))].join(', ')}${jars.some(j => j.type === 'datapack' && j.folder === 'datapacks') ? ', for a global data pack loader such as Paxi or Open Loader' : ''})` : ''}.`,
             installNote,
             launchLine ? 'Start the server with start.bat (Windows) or start.sh.' : '',
             '',
@@ -437,7 +445,7 @@ async function appendManualFiles(archive, meta, pl, out) {
         if (!r || r.from === 'download' || !m.installedFiles?.[pl]) continue;
         const src = entryFile(meta.path, pl, m);
         if (!(await fs.pathExists(src))) continue;
-        archive.file(src, { name: `overrides/${content.typeOf(m).folder}/${safeFileName(m.installedFiles[pl])}` });
+        archive.file(src, { name: `overrides/${content.folderOf(meta, m)}/${safeFileName(m.installedFiles[pl])}` });
         out.push(m.names?.[pl] || m.names?.curseforge || m.names?.modrinth || m.installedFiles[pl]);
     }
 }

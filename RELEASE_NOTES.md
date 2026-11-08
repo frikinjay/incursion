@@ -1,3 +1,37 @@
+# Incursion 2.9.3: Thread Viewer, Licenses, Local Files and Install Folders
+
+## Highlights
+
+### See what a frozen game is doing
+- The game console has a new **Threads** view while a pack runs. It shows the game's threads in plain words: running, waiting, stuck in a loop, waiting for a lock, or deadlocked.
+- When the game freezes, it says which thread stopped, for how long, and which mod's code it's stuck in. Click the mod to open it in the pack.
+- Open a thread to see where it is, with the pack's mods highlighted. Quiet background threads are folded away.
+- It works with any Java, adds nothing to the game until you open the view, and only answers Incursion on this computer.
+
+### Licenses
+- Each item in a pack's content list shows its license next to the author, and its details show it too (click it to read the license on Modrinth).
+- A license listed on Modrinth is used first. CurseForge doesn't publish licenses, so otherwise the license comes from what the mod file declares, shown for each platform's file when they differ.
+- Filter the list by license, or sort by it, from the new **License** menu.
+
+### Add local files
+- The new file button next to **Add Content** adds mods, resource packs, shaders and data packs from your computer. The type is detected and can be changed.
+- Files Modrinth or CurseForge recognise are added as normal projects, so updates keep working, using your copy instead of downloading it again. Others are kept as local files in both editions.
+
+### Install folders for resource and data packs
+- Choose where resource packs and data packs go inside the game folder, for example `config/paxi/datapacks` for a global pack loader: for the whole pack in Settings → Content, or for one item in its details.
+- Play puts them there and cleans up the old folder when it changes. Modrinth, Prism and packwiz exports and server packs use the folder; CurseForge exports bundle those files in overrides, since CurseForge can only install to the usual folders.
+
+### Faster and lighter
+- Packs open faster: loading starts when you rest the pointer on a pack, a pack you've opened before appears straight away, and opening no longer rescans the pack's folders first.
+- Packs not used for a while are released from memory once more than three are open.
+
+## Fixes
+- Buttons, rows, tabs and other clickable things show the hand cursor, and text fields the text cursor.
+- The search box in a pack's content list shrinks instead of dropping to its own line on narrower windows.
+- On mid-sized windows, a pack's details at the top no longer squeeze into a narrow column next to its buttons.
+
+---
+
 # Incursion 2.9.2: Change Minecraft Versions, Compatibility Flags and Reliable Downloads
 
 Everything new since 2.8.0. Version 2.9.1 contained most of this but was published without release notes.
