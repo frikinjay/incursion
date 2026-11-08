@@ -46,17 +46,21 @@
         k = k.replace(/gnu\s*/g, '').replace(/(lesser|library) general public licen[sc]e/g, 'lgpl').replace(/affero general public licen[sc]e/g, 'agpl')
             .replace(/general public licen[sc]e/g, 'gpl').replace(/mozilla public licen[sc]e/g, 'mpl').replace(/apache licen[sc]e/g, 'apache')
             .replace(/creative commons/g, 'cc').replace(/attribution/g, 'by').replace(/noncommercial/g, 'nc').replace(/sharealike/g, 'sa').replace(/noderivatives|noderivs/g, 'nd');
-        k = k.replace(/licenseref-?/, '').replace(/or[\s-]*later|\+|only/g, '').replace(/licen[sc]e/g, '').replace(/version/g, '').replace(/[^a-z0-9]/g, '')
+        k = k.replace(/licenseref-?/, '').replace(/or[\s-]*later|\+|only/g, '').replace(/licen[sc]e/g, '').replace(/version|international|unported/g, '').replace(/[^a-z0-9]/g, '')
             .replace(/v(?=\d)/g, '').replace(/(\d)0+(?=$|[a-z])/g, '$1');
         return k === 'allrightsreserved' ? 'arr' : k;
     }
-    // A license a platform lists wins over what the jars declare. Only Modrinth lists one (CurseForge's API doesn't), so
-    // the jars count only without it: { label } when they agree or one is known, { modrinth, curseforge } when they
-    // differ, or null. `fromFile` marks a license read from the jar.
+    // Licenses the platforms list win over what the jars declare; the jars only count when neither lists one.
+    // { label } when they agree or only one is known, { modrinth, curseforge } when they differ, or null. `fromFile`
+    // marks licenses read from the jars.
     function licenseOf(m) {
         const url = m.licenses?.modrinth?.url || null;
-        const listed = licenseText(m.licenses?.modrinth);
-        if (listed) return { label: listed, url };
+        const lmr = m.installedFiles?.modrinth ? licenseText(m.licenses?.modrinth) : null;
+        const lcf = m.installedFiles?.curseforge ? licenseText(m.licenses?.curseforge) : null;
+        if (lmr || lcf) {
+            if (!lmr || !lcf || licenseKey(lmr) === licenseKey(lcf)) return { label: lmr || lcf, url: lmr ? url : null, listedOn: lmr && lcf ? 'both' : lmr ? 'modrinth' : 'curseforge' };
+            return { modrinth: lmr, curseforge: lcf, url };
+        }
         const jar = m.contents?.licenses || {};
         const mr = m.installedFiles?.modrinth ? licenseText(jar.modrinth) : null;
         const cf = m.installedFiles?.curseforge ? licenseText(jar.curseforge) : null;
@@ -85,9 +89,11 @@
         return { from: r.from, was: r.version || r.sourceFile, now: (r.from === 'modrinth' ? m.meta?.mrVersionNumber : m.meta?.cfDisplayName) || now };
     }
     const isLocal = (m) => !m.ids.curseforge && !m.ids.modrinth && !!m.ids.local;
+    const licenseSource = (lic) => (lic.fromFile ? 'Declared in the mod file; neither platform lists one.'
+        : lic.listedOn === 'both' ? 'Listed on Modrinth and CurseForge.' : `Listed on ${lic.listedOn === 'modrinth' ? 'Modrinth' : 'CurseForge'}.`);
     const licenseBits = (lic) => (lic.label
-        ? h('span.lic', { title: `License: ${lic.label}\n${lic.fromFile ? 'Declared in the mod file; no platform lists one.' : 'Listed on Modrinth.'}` }, lic.label)
-        : h('span.lic', { title: `The files declare different licenses (no platform lists one)\nModrinth file: ${lic.modrinth || 'unknown'}\nCurseForge file: ${lic.curseforge || 'unknown'}` },
+        ? h('span.lic', { title: `License: ${lic.label}\n${licenseSource(lic)}` }, lic.label)
+        : h('span.lic', { title: `${lic.fromFile ? 'The files declare different licenses (no platform lists one)' : 'Modrinth and CurseForge list different licenses'}\nModrinth: ${lic.modrinth || 'unknown'}\nCurseForge: ${lic.curseforge || 'unknown'}` },
             h('span.plat.mr', lic.modrinth || '?'), ' ', h('span.plat.cf', lic.curseforge || '?')));
     const compatLines = (bad) => ['modrinth', 'curseforge'].filter(pl => bad?.[pl]).map(pl => `${PL_NAME[pl]}: ${bad[pl].map(r => r.text).join('; ')}`);
     function sidesTitle(m, bad) {
@@ -761,7 +767,7 @@
                     cell('File', m.installedFiles?.[pl]),
                     cell('Version', pl === 'modrinth' ? m.meta?.mrVersionNumber : m.meta?.cfDisplayName),
                     cell('Author', m.authors?.[pl]),
-                    pl === 'modrinth' && licenseText(m.licenses?.modrinth) ? cell('License', licenseText(m.licenses.modrinth)) : null,
+                    cell('License', licenseText(m.licenses?.[pl])),
                     cell('License in File', licenseText(m.contents?.licenses?.[pl])),
                     cell('Size', m.sizes?.[pl] ? fmt.bytes(m.sizes[pl]) : null),
                     snap.missing[k]?.includes(pl) ? h('div.cell', h('span.chip.amber', icon('warn'), 'File Missing on Disk')) : null)
@@ -822,8 +828,8 @@
             const lic = licenseOf(m);
             const openLicense = lic?.url ? { tabindex: '0', role: 'link', class: 'clickable', on: { click: () => call('shell:open', { url: lic.url }).catch(UI.Island.error) } } : {};
             const licenseChips = !lic ? [] : lic.label
-                ? [h('span.chip', { title: `License: ${lic.label}. ${lic.fromFile ? 'Declared in the mod file; no platform lists one.' : 'Listed on Modrinth.'}${lic.url ? ' Click to read it.' : ''}`, ...openLicense }, icon('file'), lic.label)]
-                : [h('span.chip', { title: 'License the Modrinth file declares (no platform lists one)' }, h('span.plat.mr', lic.modrinth || 'Unknown')), h('span.chip', { title: 'License the CurseForge file declares (no platform lists one)' }, h('span.plat.cf', lic.curseforge || 'Unknown'))];
+                ? [h('span.chip', { title: `License: ${lic.label}. ${licenseSource(lic)}${lic.url ? ' Click to read it.' : ''}`, ...openLicense }, icon('file'), lic.label)]
+                : [h('span.chip', { title: lic.fromFile ? 'License the Modrinth file declares' : `License on Modrinth${lic.url ? '. Click to read it.' : ''}`, ...(lic.fromFile ? {} : openLicense) }, h('span.plat.mr', lic.modrinth || 'Unknown')), h('span.chip', { title: lic.fromFile ? 'License the CurseForge file declares' : 'License on CurseForge' }, h('span.plat.cf', lic.curseforge || 'Unknown'))];
             const t = Lib.typeOf(m);
             const folder = folderOf(snap.meta, m);
             const folderCell = t.movable ? h('div.cell',

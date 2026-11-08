@@ -342,7 +342,8 @@ class PackService {
             this.checkUpdates(packPath, { quiet: true }).catch(() => {});
         }
         // Packs made before files recorded their targets get them filled in now, so compatibility flags show up.
-        const backfill = !s.targetsTried && s.meta.mods.some(compat.needsTargets);
+        // Same for CurseForge licenses, which packs from before 2.9.3 don't have.
+        const backfill = !s.targetsTried && s.meta.mods.some(m => compat.needsTargets(m) || (m.ids?.curseforge && m.licenses?.curseforge === undefined));
         if (backfill) s.targetsTried = true;   // once per session: without a CurseForge key some can't be filled
         if (s.meta.mods.length && (now - (s.meta.syncedAt || 0) > AUTO_SYNC_AFTER || backfill)) {
             this.sync(packPath, { quiet: true }).catch(() => {});

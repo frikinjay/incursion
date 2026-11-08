@@ -1,3 +1,12 @@
+# Incursion 2.9.4: CurseForge Licenses
+
+## Fixes
+- CurseForge does have a license field, I missed it somehow. Licenses now come from both Modrinth and CurseForge, and when the two list different licenses, both are shown with their platform. Only when neither lists one does Incursion use the license the mod file itself declares.
+- Packs pick up their CurseForge licenses in the background the next time they're opened.
+- Licenses written differently on each site, like "MIT" and "MIT License" or "LGPL-3.0-only" and "GNU Lesser General Public License version 3 (LGPLv3)", count as the same license.
+
+---
+
 # Incursion 2.9.3: Thread Viewer, Licenses, Local Files and Install Folders
 
 ## Highlights

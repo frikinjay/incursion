@@ -59,6 +59,8 @@ function slimCfMod(m) {
         updated: m.dateReleased || m.dateModified,
         created: m.dateCreated || null,
         distributable: m.allowModDistribution !== false,
+        // Not in CurseForge's API docs, but every mod has it, e.g. "GNU Lesser General Public License version 3 (LGPLv3)".
+        license: m.licenseType || null,
         indexes: (m.latestFilesIndexes || []).map(i => [i.gameVersion, i.modLoader, i.fileId, i.filename, i.releaseType]),
         latestFiles: (m.latestFiles || []).map(slimCfFile)
     };
@@ -347,8 +349,7 @@ const api = {
             incompat: { curseforge: c ? c.file.incompat : [], modrinth: m ? m.version.incompat : [] },
             meta: { cfFileId: c ? c.file.id : null, mrVersionId: m ? m.version.id : null, mrVersionNumber: m ? m.version.number : null, mrDate: m ? m.version.date : null, cfDisplayName: c ? c.file.displayName : null },
             targets: { curseforge: c ? targetOf(c.file) : null, modrinth: m ? targetOf(m.version) : null },
-            // CurseForge's API has no license; the scanned jar provides it (contents.licenses).
-            licenses: { modrinth: m?.project?.license || null },
+            licenses: { modrinth: m?.project?.license || null, curseforge: c?.mod?.license || null },
             summary: (c && c.mod.summary) || (m && m.project?.summary) || hint.summary || '',
             dateAdded: Date.now()
         };
@@ -524,6 +525,8 @@ const api = {
                 mod.links.curseforge = c.url;
                 mod.authors.curseforge = c.author;
                 mod.summary = c.summary || mod.summary;
+                // A cached entry from before the field was read has no `license`: leave it for the next refresh.
+                if ('license' in c) (mod.licenses ||= {}).curseforge = c.license || null;
                 const installed = c.latestFiles.find(f => f.id === Number(mod.meta?.cfFileId));
                 if (installed) mod.environments.curseforge = installed.env;
                 else if (!mod.environments.curseforge && c.latestFiles[0]) mod.environments.curseforge = c.latestFiles[0].env;
