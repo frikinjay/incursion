@@ -343,9 +343,12 @@
         ], ui.filter, (v) => { ui.filter = v; refilter(true); });
         const searchInput = h('input.field', { type: 'search', placeholder: 'Filter Content', spellcheck: false });
         searchInput.addEventListener('input', debounce(() => { ui.query = searchInput.value.trim().toLowerCase(); refilter(true); }, 90));
-        const compact = h('div.compact-title', img(snap.meta.icon, 'squircle'), h('span'));
         const selectBtn = h('button.btn', { title: 'Select multiple items', on: { click: () => setSelecting(!selecting) } }, icon('select'), h('span.lbl', 'Select'));
-        const toolbar = h('div.toolbar', compact, filterSeg,
+        // The hero's add buttons scroll away with the page; these show in the stuck toolbar so adding keeps your place.
+        const stuckAdd = h('div.btn-group.stuck-add',
+            h('button.btn.lg.icon', { title: 'Add Content', 'aria-label': 'Add Content', on: { click: () => Browse.open(snap) } }, icon('plus')),
+            h('button.btn.lg.icon', { title: 'Add Local File… (mods, resource packs, shaders, data packs)', 'aria-label': 'Add Local File', on: { click: () => LocalFiles.open(snap) } }, icon('file')));
+        const toolbar = h('div.toolbar', filterSeg,
             h('div.btn-group', UI.picker({ label: 'Type', value: ui.type, onChange: v => { ui.type = v; refilter(true); }, options: [
                 { value: 'any', label: 'All Content', short: 'Type' }, ...Object.values(Lib.TYPES).map(t => ({ value: t.id, label: t.label }))] }),
             UI.picker({ label: 'Platform', value: ui.platform, onChange: v => { ui.platform = v; refilter(true); }, options: [
@@ -358,7 +361,8 @@
                 { value: 'name', label: 'Name (A to Z)', short: 'Sort' }, { value: 'name-desc', label: 'Name (Z to A)', short: 'Z to A' }, { value: 'author', label: 'Author' }, { value: 'license', label: 'License (A to Z)', short: 'License' },
                 { value: 'added', label: 'Recently Added' }, { value: 'updated', label: 'Recently Updated' }] })),
             selectBtn,
-            h('label.search', icon('search'), searchInput));
+            h('label.search', icon('search'), searchInput),
+            stuckAdd);
         const viewport = h('div.list-viewport');
         const emptyEl = h('div.empty.hidden');
         const listHead = h('div.list-head', h('span'), h('span'), h('span', 'Name'), h('span.c-version', 'Version'), h('span.c-side', 'Side'), h('span'));
@@ -640,7 +644,6 @@
         };
         document.addEventListener('keydown', onKey);
 
-        compact.querySelector('span').textContent = snap.meta.name;
         refilter();
 
         return {
@@ -649,7 +652,6 @@
                 for (const m of snap.meta.mods) { const k = modKey(m); if (!knownKeys.has(k)) flashKeys.add(k); }
                 knownKeys = new Set(snap.meta.mods.map(modKey));
                 for (const k of [...selected]) if (!knownKeys.has(k)) selected.delete(k);
-                compact.querySelector('span').textContent = snap.meta.name;
                 syncBulk();
                 refilter();
             },

@@ -1,3 +1,14 @@
+# Incursion 3.0.1: Add Content While Scrolled
+
+## Improvements
+- Scrolled down a pack's content list, the toolbar that sticks to the top now has the Add Content and Add Local File buttons, so you can add something without losing your place. Adding, closing the panel and the list refreshing all keep you where you were.
+
+## Fixes
+- The stuck toolbar no longer squeezes the filter pickers until Sort or License is cut off on narrower windows. It moves them to a second line instead.
+- The stuck toolbar no longer repeats the pack's name, which the breadcrumb above already shows.
+
+---
+
 # Incursion 3.0.0: Electron 45
 
 ## Highlights

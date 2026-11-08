@@ -1,6 +1,6 @@
 {
   "name": "incursion",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "main": "main.js",
   "incursion": {
     "cfService": "https://incursion-cf.www-aipt.workers.dev",

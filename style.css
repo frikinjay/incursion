@@ -513,9 +513,8 @@ select.field { display: none; } /* replaced by the custom pop-up (components.js)
 /* Too narrow to read the hint: show just the magnifier until it's typed in. */
 @container (max-width: 1100px) { .toolbar .search .field:not(:focus)::placeholder { color: transparent; } }
 .toolbar > .btn { height: var(--control-lg); }
-.toolbar .compact-title { display: none; align-items: center; gap: var(--space-xs); font: 600 14px/1 var(--font-display); letter-spacing: -0.01em; white-space: nowrap; max-width: 220px; overflow: hidden; margin-right: var(--space-xs); }
-.toolbar.stuck .compact-title { display: flex; }
-.toolbar .compact-title img { width: 20px; height: 20px; }
+.toolbar .stuck-add { display: none; flex: none; }
+.toolbar.stuck .stuck-add { display: inline-flex; margin-left: auto; }
 
 .list-viewport { position: relative; }
 .row { position: absolute; left: 0; right: 0; height: var(--row-h); display: grid; grid-template-columns: var(--sel-col, 0px) 36px minmax(0, 1fr) minmax(90px, 200px) 52px 180px; align-items: center; column-gap: var(--space-sm); padding: 0 var(--space-md); border-bottom: 1px solid var(--color-rule); contain: layout style paint; transition: background-color var(--dur-micro) var(--ease-out); }
@@ -974,12 +973,9 @@ html.theme-switch::view-transition-new(*) { animation: vt-in var(--dur-long) var
 .label-with-logo { display: inline-flex; align-items: center; gap: 6px; }
 .label-with-logo .i { width: 14px; height: 14px; }
 
-.toolbar.stuck { flex-wrap: nowrap; }
+/* Groups wrap to a second line rather than being squeezed until their pickers are cut off. */
+.toolbar > .btn-group, .toolbar > .segmented { flex-shrink: 0; }
 .toolbar .search { flex: 1 1 0; min-width: 38px; }
-.toolbar .compact-title span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.toolbar .compact-title { max-width: 180px; flex: 0 1 auto; min-width: 0; }
-@container (max-width: 1100px) { .toolbar.stuck .compact-title { display: none; } }
-@container (max-width: 860px) { .toolbar.stuck { flex-wrap: wrap; } }
 @container (max-width: 960px) { .toolbar > .btn > .lbl { display: none; } }
 @container (max-width: 1240px) { .toolbar .btn-group > .menu-btn { padding: 0 8px; gap: 4px; } .toolbar .btn-group > .menu-btn > .i { width: 12px; height: 12px; } }
 
